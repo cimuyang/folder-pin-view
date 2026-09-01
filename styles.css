@@ -3,6 +3,7 @@
     flex-direction: column;
     height: 100%;
     overflow: hidden;
+    margin-top: -8px;
 }
 
 /* ── pin bar ── */

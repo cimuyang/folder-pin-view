@@ -44,7 +44,7 @@ class PromptModal extends Modal {
         const name = this.value.trim();
         if (!name) return;
         this.close();
-        this.onSubmit(name);
+        void this.onSubmit(name);
     }
 
     onClose() { this.contentEl.empty(); }
@@ -72,8 +72,8 @@ class FolderPinView extends ItemView {
 
     draw() {
         this.contentEl.empty();
-        this.drawPinBar();
         this.drawToolbar();
+        this.drawPinBar();
 
         const tree = this.contentEl.createDiv('fpv-tree');
         tree.addEventListener('contextmenu', e => {
@@ -204,7 +204,7 @@ class FolderPinView extends ItemView {
                 const row = el.createDiv('fpv-file');
                 if (child.path === activePath) row.addClass('is-active');
                 row.createSpan({ text: child.extension === 'md' ? child.basename : child.name });
-                row.addEventListener('click', () => this.app.workspace.getLeaf().openFile(child));
+                row.addEventListener('click', () => void this.app.workspace.getLeaf().openFile(child));
                 row.addEventListener('contextmenu', e => this.showFileMenu(e, child));
             }
         }
