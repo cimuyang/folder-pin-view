@@ -93,6 +93,32 @@
     outline-offset: 1px;
 }
 
+/* ── toolbar ── */
+.fpv-toolbar {
+    display: flex;
+    flex-shrink: 0;
+    align-items: center;
+    gap: 2px;
+    padding: 3px 6px;
+    border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.fpv-tool {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: var(--radius-s);
+    color: var(--text-muted);
+    cursor: pointer;
+}
+.fpv-tool:hover {
+    background: var(--background-modifier-hover);
+    color: var(--text-normal);
+}
+.fpv-tool svg { width: 16px; height: 16px; }
+
 .fpv-empty {
     padding: 16px 12px;
     color: var(--text-faint);

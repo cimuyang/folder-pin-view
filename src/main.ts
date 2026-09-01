@@ -9,9 +9,10 @@ interface PluginData {
     pinnedFolders: string[];
     activeFolderPath: string | null;
     expandedFolders: string[];
+    sortOrder: 'asc' | 'desc';
 }
 
-const DEFAULT_DATA: PluginData = { pinnedFolders: [], activeFolderPath: null, expandedFolders: [] };
+const DEFAULT_DATA: PluginData = { pinnedFolders: [], activeFolderPath: null, expandedFolders: [], sortOrder: 'asc' };
 
 // ── Prompt modal ──────────────────────────────────────────────────────────────
 
@@ -72,6 +73,7 @@ class FolderPinView extends ItemView {
     draw() {
         this.contentEl.empty();
         this.drawPinBar();
+        this.drawToolbar();
 
         const tree = this.contentEl.createDiv('fpv-tree');
         tree.addEventListener('contextmenu', e => {
@@ -84,6 +86,49 @@ class FolderPinView extends ItemView {
 
         if (target instanceof TFolder) this.drawFolder(tree, target);
         else tree.createDiv({ cls: 'fpv-empty', text: 'Right-click a folder and choose "Pin folder".' });
+    }
+
+    // ── toolbar ──
+
+    private drawToolbar() {
+        const bar = this.contentEl.createDiv('fpv-toolbar');
+        const btn = (icon: string, label: string, fn: () => void) => {
+            const b = bar.createDiv({ cls: 'fpv-tool', attr: { 'aria-label': label } });
+            setIcon(b, icon);
+            b.addEventListener('click', fn);
+        };
+        const base = this.data.activeFolderPath ?? '';
+        btn('square-pen',    'New note',       () => this.createEntry(false, base));
+        btn('folder-plus',   'New folder',     () => this.createEntry(true, base));
+        btn('arrow-up-az',   'Sort ' + (this.data.sortOrder === 'asc' ? 'Z→A' : 'A→Z'), () => {
+            this.data.sortOrder = this.data.sortOrder === 'asc' ? 'desc' : 'asc';
+            this.persist();
+            this.draw();
+        });
+        btn('chevrons-up-down', 'Expand all',  () => this.expandAll());
+        btn('chevrons-down-up', 'Collapse all',() => this.collapseAll());
+    }
+
+    private expandAll() {
+        const target = this.data.activeFolderPath
+            ? this.app.vault.getAbstractFileByPath(this.data.activeFolderPath)
+            : this.app.vault.getRoot();
+        if (!(target instanceof TFolder)) return;
+        const collect = (f: TFolder) => {
+            for (const child of f.children) {
+                if (child instanceof TFolder) { this.data.expandedFolders.push(child.path); collect(child); }
+            }
+        };
+        this.data.expandedFolders = [];
+        collect(target);
+        this.persist();
+        this.draw();
+    }
+
+    private collapseAll() {
+        this.data.expandedFolders = [];
+        this.persist();
+        this.draw();
     }
 
     // ── pin bar ──
@@ -137,7 +182,8 @@ class FolderPinView extends ItemView {
 
         const sorted = [...folder.children].sort((a, b) => {
             if ((a instanceof TFolder) !== (b instanceof TFolder)) return a instanceof TFolder ? -1 : 1;
-            return a.name.localeCompare(b.name);
+            const cmp = a.name.localeCompare(b.name);
+            return this.data.sortOrder === 'asc' ? cmp : -cmp;
         });
 
         for (const child of sorted) {
