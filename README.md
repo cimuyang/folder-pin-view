@@ -2,6 +2,8 @@
 
 An Obsidian plugin that pins your frequently used folders as top buttons in the sidebar. Click one, and the sidebar will only show that folder's contents, saying goodbye to the clutter of the full vault file tree.
 
+![](https://github.com/cimuyang/folder-pin-view/blob/main/Promotion.png)
+
 ## Features
 
 - Pin any folder (at any depth) as a quick-access button
