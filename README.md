@@ -10,7 +10,8 @@ An Obsidian plugin that pins your frequently used folders as top buttons in the 
 - Click a button to make that folder the root of the file tree
 - Drag buttons to reorder them
 - Right-click a button to unpin
-- Right-click files and folders for: **New note**, **New folder**, **Rename**, **Delete**
+- Toolbar: **New note**, **New folder**, **Sort A-Z / Z-A**, **Expand all**, **Collapse all**
+- Right-click files and folders for: **Rename**, **Delete**
 - Active file is highlighted in the tree
 - Expanded folders and active selection are restored on relaunch
 - Pins update automatically when folders are renamed, moved, or deleted
@@ -44,7 +45,7 @@ npm run dev     # watch mode
 
 ---
 
-# Folder Pin View（文件区视图 插件）
+# Folder Pin View（中文）
 
 一个 Obsidian 插件，将常用文件夹固定为侧边栏顶部按钮，点击后侧边栏只展示该文件夹的内容，告别全库文件树的干扰。
 
@@ -54,7 +55,8 @@ npm run dev     # watch mode
 - 点击按钮，将该文件夹设为文件树的根节点
 - 拖拽按钮调整顺序
 - 右键按钮取消固定
-- 右键文件/文件夹：**新建笔记**、**新建文件夹**、**重命名**、**删除**
+- 工具栏：**新建笔记**、**新建文件夹**、**A-Z / Z-A 排序**、**展开全部**、**折叠全部**
+- 右键文件/文件夹：**重命名**、**删除**
 - 当前打开的文件在树中高亮显示
 - 重启 Obsidian 后恢复上次展开的文件夹和选中状态
 - 固定的文件夹被重命名、移动或删除时自动同步
