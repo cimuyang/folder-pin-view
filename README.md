@@ -42,7 +42,7 @@ npm run dev     # watch mode
 
 ---
 
-# Folder Pin View（中文）
+# Folder Pin View（文件区视图插件）
 
 一个 Obsidian 插件，将常用文件夹固定为侧边栏顶部按钮，点击后侧边栏只展示该文件夹的内容，告别全库文件树的干扰。
 
