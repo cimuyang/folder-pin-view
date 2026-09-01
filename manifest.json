@@ -1,7 +1,7 @@
 {
     "id": "folder-pin-view",
     "name": "Folder Pin View",
-    "version": "2.1.0",
+    "version": "2.2.0",
     "minAppVersion": "1.5.0",
     "description": "Pin folders to a custom file tree view.",
     "author": "cimuyang",

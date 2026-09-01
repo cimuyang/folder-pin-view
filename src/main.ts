@@ -287,7 +287,7 @@ class FolderPinView extends ItemView {
     }
 
     private async deleteFile(file: TAbstractFile) {
-        try { await this.app.fileManager.trashFile(file); }
+        try { await this.app.vault.trash(file, true); }
         catch (err) { new Notice('Delete failed: ' + String(err)); }
     }
 
