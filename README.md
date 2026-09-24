@@ -6,6 +6,8 @@ Pin frequently used folders as sidebar tabs and focus on one folder at a time.
 
 **版本 / Version:** 2.2.1 · **Obsidian:** 1.8.7+
 
+![](https://github.com/cimuyang/folder-pin-view/blob/main/Promotion-2.2.1.png)
+
 ## 功能
 
 - **快速切换**：固定任意层级的文件夹，拖拽标签排序，右键取消固定。
