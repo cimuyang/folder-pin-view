@@ -9,7 +9,7 @@ const ctx = await esbuild.context({
     format: 'cjs',
     target: 'es2018',
     logLevel: 'info',
-    sourcemap: 'inline',
+    sourcemap: isWatch ? 'inline' : false,
     outfile: 'main.js',
 });
 

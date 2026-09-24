@@ -1,3 +1,4 @@
+"use strict";
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
 var __getOwnPropNames = Object.getOwnPropertyNames;
@@ -22,350 +23,1026 @@ __export(main_exports, {
   default: () => FolderPinPlugin
 });
 module.exports = __toCommonJS(main_exports);
+var import_obsidian2 = require("obsidian");
+
+// src/model.ts
+var SORT_ORDERS = ["name-asc", "name-desc", "mtime-desc", "mtime-asc", "ctime-desc", "ctime-asc"];
+var record = (v) => v !== null && typeof v === "object" && !Array.isArray(v) ? v : {};
+var paths = (v) => Array.isArray(v) ? [...new Set(v.filter((p) => typeof p === "string" && p.length > 0 && p !== "/" && !p.split("/").some((s) => !s || s === "." || s === "..")))] : [];
+var zoneKey = (path) => "@" + (path != null ? path : "");
+var containsPath = (folder, path) => !folder || path === folder || path.startsWith(folder + "/");
+function normalizeData(raw) {
+  var _a, _b;
+  const input = record(raw);
+  const pins = paths(input.pinnedFolders);
+  const active = typeof input.activeFolderPath === "string" && pins.includes(input.activeFolderPath) ? input.activeFolderPath : (_a = pins[0]) != null ? _a : null;
+  const sortOrder = SORT_ORDERS.includes(input.sortOrder) ? input.sortOrder : input.sortOrder === "desc" ? "name-desc" : "name-asc";
+  const data = {
+    version: 3,
+    pinnedFolders: pins,
+    activeFolderPath: active,
+    sortOrder,
+    language: input.language === "zh" || input.language === "en" ? input.language : "auto",
+    autoReveal: input.autoReveal === true,
+    zones: /* @__PURE__ */ Object.create(null)
+  };
+  for (const path of [null, ...pins]) {
+    const saved = record(record(input.zones)[zoneKey(path)]);
+    data.zones[zoneKey(path)] = {
+      expanded: paths((_b = saved.expanded) != null ? _b : input.expandedFolders).filter((p) => containsPath(path, p) && p !== path),
+      scrollTop: typeof saved.scrollTop === "number" && Number.isFinite(saved.scrollTop) ? Math.max(0, saved.scrollTop) : 0
+    };
+  }
+  return data;
+}
+function getZone(data, path = data.activeFolderPath) {
+  var _a;
+  return (_a = data.zones[zoneKey(path)]) != null ? _a : data.zones[zoneKey(path)] = { expanded: [], scrollTop: 0 };
+}
+function revealZone(pins, current, file) {
+  if (current !== null && containsPath(current, file)) return current;
+  if (!pins.length) return null;
+  return pins.filter((p) => containsPath(p, file)).sort((a, b) => b.length - a.length)[0];
+}
+function ancestorPaths(file, root) {
+  const parents = [];
+  let path = file.slice(0, file.lastIndexOf("/"));
+  if (!file.includes("/")) return parents;
+  while (path && path !== root && containsPath(root, path)) {
+    parents.unshift(path);
+    const index = path.lastIndexOf("/");
+    if (index < 0) break;
+    path = path.slice(0, index);
+  }
+  return parents;
+}
+function remapData(data, oldPath, newPath) {
+  const remap = (p) => containsPath(oldPath, p) ? newPath + p.slice(oldPath.length) : p;
+  data.pinnedFolders = [...new Set(data.pinnedFolders.map(remap))];
+  if (data.activeFolderPath) data.activeFolderPath = remap(data.activeFolderPath);
+  const zones = /* @__PURE__ */ Object.create(null);
+  for (const [key, state] of Object.entries(data.zones)) {
+    const root = remap(key.slice(1)) || null;
+    zones[zoneKey(root)] = { ...state, expanded: state.expanded.map(remap).filter((p) => containsPath(root, p) && p !== root) };
+  }
+  data.zones = zones;
+}
+function removePath(data, path) {
+  var _a, _b;
+  const oldIndex = data.pinnedFolders.indexOf((_a = data.activeFolderPath) != null ? _a : "");
+  data.pinnedFolders = data.pinnedFolders.filter((p) => !containsPath(path, p));
+  if (data.activeFolderPath && containsPath(path, data.activeFolderPath))
+    data.activeFolderPath = (_b = data.pinnedFolders[Math.min(oldIndex, data.pinnedFolders.length - 1)]) != null ? _b : null;
+  for (const [key, zone] of Object.entries(data.zones)) {
+    if (containsPath(path, key.slice(1))) delete data.zones[key];
+    else zone.expanded = zone.expanded.filter((p) => !containsPath(path, p));
+  }
+}
+function comparator(order, locale) {
+  const collator = new Intl.Collator(locale, { numeric: true, sensitivity: "base" });
+  const nameCompare = (a, b) => collator.compare(a.name, b.name) || a.name.localeCompare(b.name);
+  return (a, b) => {
+    var _a, _b;
+    if (a.folder !== b.folder) return a.folder ? -1 : 1;
+    if (a.folder || order.startsWith("name")) return nameCompare(a, b) * (order === "name-desc" ? -1 : 1);
+    const field = order.startsWith("mtime") ? "mtime" : "ctime";
+    const diff = ((_a = a[field]) != null ? _a : 0) - ((_b = b[field]) != null ? _b : 0);
+    return (order.endsWith("desc") ? -diff : diff) || nameCompare(a, b);
+  };
+}
+function validName(name) {
+  return !!name && name === name.trim() && !/[<>:"/\\|?*\u0000-\u001f]/.test(name) && !/[. ]$/.test(name) && name !== "." && name !== ".." && !/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(name);
+}
+function entryPath(parent, name, extension = "") {
+  const suffix = extension && !name.toLowerCase().endsWith("." + extension.toLowerCase()) ? "." + extension : "";
+  return (parent && parent !== "/" ? parent + "/" : "") + name + suffix;
+}
+function revealScroll(scroll, viewport, start, width) {
+  if (viewport <= 0) return scroll;
+  if (start < scroll) return Math.max(0, start);
+  if (start + width > scroll + viewport) return Math.max(0, start + Math.min(width, viewport) - viewport);
+  return scroll;
+}
+
+// src/i18n.ts
+var en = {
+  title: "Folder Pin View",
+  newNote: "New note",
+  newFolder: "New folder",
+  sort: "Change sort order",
+  autoReveal: "Auto-reveal active file",
+  expand: "Expand all",
+  collapse: "Collapse all",
+  pin: "Pin folder",
+  unpin: "Unpin folder",
+  rename: "Rename",
+  delete: "Delete",
+  openTab: "Open in new tab",
+  empty: "This folder is empty",
+  pinHint: "Right-click a folder in the file explorer to pin it here.",
+  untitled: "Untitled",
+  untitledFolder: "Untitled folder",
+  invalidName: "Enter a valid name without path separators or reserved characters.",
+  exists: "An item with this name already exists.",
+  missing: "This file or folder no longer exists.",
+  operationFailed: "Operation failed",
+  saveFailed: "Could not save Folder Pin View settings.",
+  editHint: "Enter to save \xB7 Esc to cancel",
+  language: "Language",
+  followApp: "Follow Obsidian",
+  languageDesc: "Applies to this plugin. Native dialogs follow Obsidian.",
+  autoRevealDesc: "Follow the active note within pinned folders. Notes outside them leave this view unchanged.",
+  openView: "Open folder regions",
+  reveal: "Reveal active file",
+  regions: "Folder regions",
+  files: "Files",
+  vault: "Vault",
+  "name-asc": "File name (A\u2013Z)",
+  "name-desc": "File name (Z\u2013A)",
+  "mtime-desc": "Modified time (new to old)",
+  "mtime-asc": "Modified time (old to new)",
+  "ctime-desc": "Created time (new to old)",
+  "ctime-asc": "Created time (old to new)"
+};
+var zh = {
+  title: "\u6587\u4EF6\u533A",
+  newNote: "\u65B0\u5EFA\u7B14\u8BB0",
+  newFolder: "\u65B0\u5EFA\u6587\u4EF6\u5939",
+  sort: "\u66F4\u6539\u6392\u5E8F\u65B9\u5F0F",
+  autoReveal: "\u81EA\u52A8\u663E\u793A\u5F53\u524D\u6587\u4EF6",
+  expand: "\u5168\u90E8\u5C55\u5F00",
+  collapse: "\u5168\u90E8\u6298\u53E0",
+  pin: "\u56FA\u5B9A\u6587\u4EF6\u5939",
+  unpin: "\u53D6\u6D88\u56FA\u5B9A",
+  rename: "\u91CD\u547D\u540D",
+  delete: "\u5220\u9664",
+  openTab: "\u5728\u65B0\u6807\u7B7E\u9875\u4E2D\u6253\u5F00",
+  empty: "\u6B64\u6587\u4EF6\u5939\u4E3A\u7A7A",
+  pinHint: "\u5728\u6587\u4EF6\u5217\u8868\u4E2D\u53F3\u952E\u6587\u4EF6\u5939\uFF0C\u5373\u53EF\u5C06\u5B83\u56FA\u5B9A\u5230\u8FD9\u91CC\u3002",
+  untitled: "\u672A\u547D\u540D",
+  untitledFolder: "\u672A\u547D\u540D\u6587\u4EF6\u5939",
+  invalidName: "\u8BF7\u8F93\u5165\u6709\u6548\u540D\u79F0\uFF0C\u4E0D\u5305\u542B\u8DEF\u5F84\u5206\u9694\u7B26\u6216\u4FDD\u7559\u5B57\u7B26\u3002",
+  exists: "\u5DF2\u5B58\u5728\u540C\u540D\u6587\u4EF6\u6216\u6587\u4EF6\u5939\u3002",
+  missing: "\u6B64\u6587\u4EF6\u6216\u6587\u4EF6\u5939\u5DF2\u4E0D\u5B58\u5728\u3002",
+  operationFailed: "\u64CD\u4F5C\u5931\u8D25",
+  saveFailed: "\u65E0\u6CD5\u4FDD\u5B58\u6587\u4EF6\u533A\u8BBE\u7F6E\u3002",
+  editHint: "Enter \u4FDD\u5B58 \xB7 Esc \u53D6\u6D88",
+  language: "\u754C\u9762\u8BED\u8A00",
+  followApp: "\u8DDF\u968F Obsidian",
+  languageDesc: "\u9002\u7528\u4E8E\u672C\u63D2\u4EF6\uFF1B\u539F\u751F\u5BF9\u8BDD\u6846\u8DDF\u968F Obsidian \u7684\u8BED\u8A00\u3002",
+  autoRevealDesc: "\u5728\u5DF2\u56FA\u5B9A\u7684\u6587\u4EF6\u533A\u5185\u8DDF\u968F\u5F53\u524D\u7B14\u8BB0\uFF1B\u5176\u4ED6\u4F4D\u7F6E\u7684\u7B14\u8BB0\u4E0D\u4F1A\u6539\u53D8\u6B64\u89C6\u56FE\u3002",
+  openView: "\u6253\u5F00\u6587\u4EF6\u533A",
+  reveal: "\u663E\u793A\u5F53\u524D\u6587\u4EF6",
+  regions: "\u6587\u4EF6\u533A\u5207\u6362",
+  files: "\u6587\u4EF6\u5217\u8868",
+  vault: "\u4ED3\u5E93",
+  "name-asc": "\u6587\u4EF6\u540D\uFF08A\u2013Z\uFF09",
+  "name-desc": "\u6587\u4EF6\u540D\uFF08Z\u2013A\uFF09",
+  "mtime-desc": "\u4FEE\u6539\u65F6\u95F4\uFF08\u4ECE\u65B0\u5230\u65E7\uFF09",
+  "mtime-asc": "\u4FEE\u6539\u65F6\u95F4\uFF08\u4ECE\u65E7\u5230\u65B0\uFF09",
+  "ctime-desc": "\u521B\u5EFA\u65F6\u95F4\uFF08\u4ECE\u65B0\u5230\u65E7\uFF09",
+  "ctime-asc": "\u521B\u5EFA\u65F6\u95F4\uFF08\u4ECE\u65E7\u5230\u65B0\uFF09"
+};
+function resolveLanguage(language, appLanguage) {
+  return language === "auto" ? appLanguage.toLowerCase().startsWith("zh") ? "zh" : "en" : language;
+}
+function translate(language, key) {
+  return (language === "zh" ? zh : en)[key];
+}
+
+// src/view.ts
 var import_obsidian = require("obsidian");
 var VIEW_TYPE = "folder-pin-view";
-var DEFAULT_DATA = { pinnedFolders: [], activeFolderPath: null, expandedFolders: [], sortOrder: "asc" };
-var PromptModal = class extends import_obsidian.Modal {
-  constructor(app, heading, initial, onSubmit) {
-    super(app);
-    this.heading = heading;
-    this.initial = initial;
-    this.onSubmit = onSubmit;
-    this.value = initial;
-  }
-  onOpen() {
-    this.titleEl.setText(this.heading);
-    new import_obsidian.Setting(this.contentEl).addText((t) => {
-      t.setValue(this.initial).onChange((v) => this.value = v);
-      t.inputEl.select();
-      t.inputEl.focus();
-      t.inputEl.addEventListener("keydown", (e) => {
-        if (e.key === "Enter") {
-          e.preventDefault();
-          this.submit();
-        }
-      });
-    });
-    new import_obsidian.Setting(this.contentEl).addButton((b) => b.setButtonText("OK").setCta().onClick(() => this.submit()));
-  }
-  submit() {
-    const name = this.value.trim();
-    if (!name) return;
-    this.close();
-    void this.onSubmit(name);
-  }
-  onClose() {
-    this.contentEl.empty();
-  }
-};
+var nextLabelId = 0;
 var FolderPinView = class extends import_obsidian.ItemView {
-  constructor(leaf, data, persist) {
+  constructor(leaf, plugin) {
     super(leaf);
-    this.data = data;
-    this.persist = persist;
-    this.dragIndex = -1;
-    this.refresh = (0, import_obsidian.debounce)(() => this.draw(), 100, true);
+    this.plugin = plugin;
+    this.containerLabels = [];
+    this.pinSignature = "";
+    this.rows = /* @__PURE__ */ new Map();
+    this.visible = [];
+    this.focusedPath = null;
+    this.renderedZone = null;
+    this.lastActive = null;
+    this.dragPath = null;
+    this.editor = null;
+    this.closed = false;
+    this.lastLanguage = "";
+    this.t = (key) => this.plugin.t(key);
+  }
+  get data() {
+    return this.plugin.data;
   }
   getViewType() {
     return VIEW_TYPE;
   }
   getDisplayText() {
-    return "Folder Pin";
+    return this.t("title");
   }
   getIcon() {
     return "pin";
   }
   async onOpen() {
+    this.closed = false;
+    this.contentEl.empty();
     this.contentEl.addClass("fpv-root");
-    this.draw();
+    this.toolbar = this.contentEl.createDiv({ cls: "nav-header fpv-toolbar", attr: { role: "toolbar" } });
+    this.pinBar = this.contentEl.createDiv({ cls: "fpv-bar", attr: { role: "tablist" } });
+    this.tree = this.contentEl.createDiv({ cls: "fpv-tree", attr: { role: "tree", tabindex: "0" } });
+    this.containerLabels = [];
+    for (const [container, key] of [[this.toolbar, "title"], [this.pinBar, "regions"], [this.tree, "files"]]) {
+      const id = `fpv-label-${++nextLabelId}`;
+      const label = this.contentEl.createSpan({ attr: { id, hidden: "" } });
+      container.setAttribute("aria-labelledby", id);
+      this.containerLabels.push({ el: label, key });
+    }
+    this.registerDomEvent(this.tree, "scroll", () => {
+      this.captureScroll();
+      this.plugin.persist();
+    });
+    this.registerDomEvent(this.tree, "keydown", (event) => this.onTreeKey(event));
+    this.registerDomEvent(this.tree, "contextmenu", (event) => {
+      if (event.target === this.tree || event.target.closest(".fpv-empty")) {
+        event.preventDefault();
+        this.creationMenu(new import_obsidian.Menu(), this.rootPath()).showAtMouseEvent(event);
+      }
+    });
+    this.registerDomEvent(this.pinBar, "wheel", (event) => {
+      if (Math.abs(event.deltaY) <= Math.abs(event.deltaX) || this.pinBar.scrollWidth <= this.pinBar.clientWidth) return;
+      const old = this.pinBar.scrollLeft;
+      this.pinBar.scrollLeft += event.deltaY * (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? this.pinBar.clientWidth : 1);
+      if (old !== this.pinBar.scrollLeft) event.preventDefault();
+    }, { passive: false });
+    this.registerDomEvent(this.pinBar, "scroll", () => this.updateOverflow());
+    this.localize();
+    if (this.data.autoReveal) this.revealActive();
   }
   async onClose() {
+    this.captureScroll();
+    this.closed = true;
+    if (this.frame !== void 0) this.contentEl.win.cancelAnimationFrame(this.frame);
+    this.cancelEditor();
+    this.plugin.flushSave();
   }
-  draw() {
-    this.contentEl.empty();
-    this.drawToolbar();
-    this.drawPinBar();
-    const tree = this.contentEl.createDiv("fpv-tree");
-    tree.addEventListener("contextmenu", (e) => {
-      if (e.target === tree) this.showRootMenu(e);
-    });
-    const target = this.data.activeFolderPath ? this.app.vault.getAbstractFileByPath(this.data.activeFolderPath) : this.app.vault.getRoot();
-    if (target instanceof import_obsidian.TFolder) this.drawFolder(tree, target);
-    else tree.createDiv({ cls: "fpv-empty", text: 'Right-click a folder and choose "Pin folder".' });
+  onResize() {
+    this.schedulePinReveal();
   }
-  // ── toolbar ──
-  drawToolbar() {
+  localize() {
+    if (!this.tree) return;
+    this.lastLanguage = this.plugin.language;
+    this.containerLabels.forEach(({ el, key }) => el.setText(this.t(key)));
+    this.buildToolbar();
+    this.sync();
+  }
+  sync() {
     var _a;
-    const bar = this.contentEl.createDiv("fpv-toolbar");
-    const btn = (icon, label, fn) => {
-      const b = bar.createDiv({ cls: "fpv-tool", attr: { "aria-label": label } });
-      (0, import_obsidian.setIcon)(b, icon);
-      b.addEventListener("click", fn);
-    };
-    const base = (_a = this.data.activeFolderPath) != null ? _a : "";
-    btn("square-pen", "New note", () => this.createEntry(false, base));
-    btn("folder-plus", "New folder", () => this.createEntry(true, base));
-    btn("arrow-up-az", "Sort " + (this.data.sortOrder === "asc" ? "Z\u2192A" : "A\u2192Z"), () => {
-      this.data.sortOrder = this.data.sortOrder === "asc" ? "desc" : "asc";
-      this.persist();
-      this.draw();
-    });
-    btn("chevrons-up-down", "Expand all", () => this.expandAll());
-    btn("chevrons-down-up", "Collapse all", () => this.collapseAll());
+    if (!this.tree || this.closed) return;
+    if (this.lastLanguage !== this.plugin.language) {
+      this.localize();
+      return;
+    }
+    if (this.renderedZone !== zoneKey(this.data.activeFolderPath) && !((_a = this.editor) == null ? void 0 : _a.busy)) this.cancelEditor();
+    this.renderPins();
+    this.renderTree(false);
   }
-  expandAll() {
-    const target = this.data.activeFolderPath ? this.app.vault.getAbstractFileByPath(this.data.activeFolderPath) : this.app.vault.getRoot();
-    if (!(target instanceof import_obsidian.TFolder)) return;
-    const collect = (f) => {
-      for (const child of f.children) {
-        if (child instanceof import_obsidian.TFolder) {
-          this.data.expandedFolders.push(child.path);
-          collect(child);
-        }
+  tool(icon, key, handler) {
+    const button = this.toolbar.createEl("button", { cls: "clickable-icon nav-action-button fpv-tool", attr: { type: "button" } });
+    (0, import_obsidian.setIcon)(button, icon);
+    (0, import_obsidian.setTooltip)(button, this.t(key));
+    button.addEventListener("click", handler);
+    return button;
+  }
+  buildToolbar() {
+    this.toolbar.empty();
+    this.tool("square-pen", "newNote", () => this.startCreate(false, this.rootPath()));
+    this.tool("folder-plus", "newFolder", () => this.startCreate(true, this.rootPath()));
+    const sort = this.tool("arrow-up-narrow-wide", "sort", () => {
+      const menu = new import_obsidian.Menu();
+      SORT_ORDERS.forEach((order, index) => {
+        if (index === 2 || index === 4) menu.addSeparator();
+        menu.addItem((item) => item.setTitle(this.t(order)).setChecked(this.data.sortOrder === order).onClick(() => {
+          this.data.sortOrder = order;
+          this.plugin.persist();
+          this.plugin.views().forEach((view) => view.renderTree());
+        }));
+      });
+      const rect = sort.getBoundingClientRect();
+      menu.showAtPosition({ x: rect.left, y: rect.bottom });
+    });
+    this.followButton = this.tool("gallery-vertical", "autoReveal", () => {
+      this.data.autoReveal = !this.data.autoReveal;
+      this.plugin.persist();
+      this.plugin.views().forEach((view) => {
+        view.updateToolbar();
+        if (this.data.autoReveal) view.revealActive();
+      });
+    });
+    this.collapseButton = this.tool("chevrons-up-down", "expand", () => this.toggleAll());
+    this.updateToolbar();
+  }
+  updateToolbar() {
+    if (!this.collapseButton) return;
+    this.followButton.toggleClass("is-active", this.data.autoReveal);
+    this.followButton.setAttribute("aria-pressed", String(this.data.autoReveal));
+    const hasExpanded = getZone(this.data).expanded.length > 0;
+    (0, import_obsidian.setIcon)(this.collapseButton, hasExpanded ? "chevrons-down-up" : "chevrons-up-down");
+    (0, import_obsidian.setTooltip)(this.collapseButton, this.t(hasExpanded ? "collapse" : "expand"));
+  }
+  rootPath() {
+    var _a;
+    return (_a = this.data.activeFolderPath) != null ? _a : "";
+  }
+  rootFolder() {
+    const root = this.data.activeFolderPath ? this.app.vault.getAbstractFileByPath(this.data.activeFolderPath) : this.app.vault.getRoot();
+    return root instanceof import_obsidian.TFolder ? root : null;
+  }
+  renderPins() {
+    var _a;
+    const signature = JSON.stringify([this.data.pinnedFolders, this.plugin.language]);
+    if (signature !== this.pinSignature) {
+      const scroll = this.pinBar.scrollLeft;
+      const hadFocus = this.pinBar.contains(this.contentEl.doc.activeElement);
+      this.pinBar.empty();
+      this.pinSignature = signature;
+      this.data.pinnedFolders.forEach((path) => {
+        const button = this.pinBar.createEl("button", {
+          cls: "fpv-pin",
+          text: path.split("/").pop() || path,
+          attr: { type: "button", role: "tab", draggable: "true", "data-path": path, "aria-label": path }
+        });
+        (0, import_obsidian.setTooltip)(button, path);
+        button.addEventListener("click", () => this.selectRegion(path));
+        button.addEventListener("contextmenu", (event) => {
+          event.preventDefault();
+          new import_obsidian.Menu().addItem((item) => item.setTitle(this.t("unpin")).setIcon("pin-off").onClick(() => {
+            void this.plugin.setPinned(path, false);
+          })).showAtMouseEvent(event);
+        });
+        button.addEventListener("keydown", (event) => {
+          var _a2;
+          const pins = this.data.pinnedFolders;
+          let index = pins.indexOf(path);
+          if (event.key === "ArrowLeft") index = (index + pins.length - 1) % pins.length;
+          else if (event.key === "ArrowRight") index = (index + 1) % pins.length;
+          else if (event.key === "Home") index = 0;
+          else if (event.key === "End") index = pins.length - 1;
+          else return;
+          event.preventDefault();
+          this.selectRegion(pins[index]);
+          (_a2 = this.activePin()) == null ? void 0 : _a2.focus({ preventScroll: true });
+        });
+        button.addEventListener("dragstart", (event) => {
+          var _a2;
+          this.dragPath = path;
+          button.addClass("is-dragging");
+          (_a2 = event.dataTransfer) == null ? void 0 : _a2.setData("text/plain", path);
+          if (event.dataTransfer) event.dataTransfer.effectAllowed = "move";
+        });
+        button.addEventListener("dragend", () => {
+          this.dragPath = null;
+          this.pinBar.querySelectorAll(".is-dragging, .drag-over").forEach((el) => el.classList.remove("is-dragging", "drag-over"));
+        });
+        button.addEventListener("dragover", (event) => {
+          if (!this.dragPath || this.dragPath === path) return;
+          event.preventDefault();
+          button.addClass("drag-over");
+        });
+        button.addEventListener("dragleave", () => button.removeClass("drag-over"));
+        button.addEventListener("drop", (event) => {
+          var _a2;
+          event.preventDefault();
+          const from = this.data.pinnedFolders.indexOf((_a2 = this.dragPath) != null ? _a2 : "");
+          const to = this.data.pinnedFolders.indexOf(path);
+          this.dragPath = null;
+          button.removeClass("drag-over");
+          if (from < 0 || to < 0 || from === to) return;
+          const [moved] = this.data.pinnedFolders.splice(from, 1);
+          this.data.pinnedFolders.splice(to, 0, moved);
+          this.plugin.persist();
+          this.plugin.views().forEach((view) => view.renderPins());
+        });
+      });
+      this.pinBar.scrollLeft = scroll;
+      this.updatePinSelection();
+      if (hadFocus) (_a = this.activePin()) == null ? void 0 : _a.focus({ preventScroll: true });
+    } else this.updatePinSelection();
+    this.pinBar.hidden = this.data.pinnedFolders.length === 0;
+    this.schedulePinReveal();
+  }
+  updatePinSelection() {
+    this.pinBar.querySelectorAll(".fpv-pin").forEach((button) => {
+      const selected = button.dataset.path === this.data.activeFolderPath;
+      button.toggleClass("is-active", selected);
+      button.setAttribute("aria-selected", String(selected));
+      button.tabIndex = selected ? 0 : -1;
+    });
+  }
+  activePin() {
+    return this.pinBar.querySelector(".fpv-pin.is-active");
+  }
+  schedulePinReveal() {
+    if (!this.pinBar || this.closed) return;
+    if (this.frame !== void 0) this.contentEl.win.cancelAnimationFrame(this.frame);
+    this.frame = this.contentEl.win.requestAnimationFrame(() => {
+      this.frame = void 0;
+      const button = this.activePin();
+      if (button) {
+        const bar = this.pinBar.getBoundingClientRect();
+        const rect = button.getBoundingClientRect();
+        const start = rect.left - bar.left + this.pinBar.scrollLeft;
+        this.pinBar.scrollLeft = revealScroll(this.pinBar.scrollLeft, this.pinBar.clientWidth, start - 8, rect.width + 16);
       }
-    };
-    this.data.expandedFolders = [];
-    collect(target);
-    this.persist();
-    this.draw();
-  }
-  collapseAll() {
-    this.data.expandedFolders = [];
-    this.persist();
-    this.draw();
-  }
-  // ── pin bar ──
-  drawPinBar() {
-    const bar = this.contentEl.createDiv("fpv-bar");
-    this.data.pinnedFolders.forEach((path, idx) => {
-      const btn = bar.createEl("button", {
-        cls: "fpv-btn",
-        text: path.split("/").pop() || path,
-        title: path,
-        attr: { draggable: "true" }
-      });
-      if (path === this.data.activeFolderPath) btn.addClass("is-active");
-      btn.addEventListener("click", () => {
-        this.data.activeFolderPath = path;
-        this.persist();
-        this.draw();
-      });
-      btn.addEventListener("contextmenu", (e) => {
-        e.preventDefault();
-        new import_obsidian.Menu().addItem((i) => i.setTitle("Unpin").setIcon("x").onClick(() => this.unpin(path))).showAtMouseEvent(e);
-      });
-      btn.addEventListener("dragstart", () => {
-        this.dragIndex = idx;
-        btn.addClass("is-dragging");
-      });
-      btn.addEventListener("dragend", () => {
-        this.dragIndex = -1;
-        btn.removeClass("is-dragging");
-      });
-      btn.addEventListener("dragover", (e) => {
-        e.preventDefault();
-        btn.addClass("drag-over");
-      });
-      btn.addEventListener("dragleave", () => btn.removeClass("drag-over"));
-      btn.addEventListener("drop", (e) => {
-        e.preventDefault();
-        btn.removeClass("drag-over");
-        if (this.dragIndex < 0 || this.dragIndex === idx) return;
-        const pins = this.data.pinnedFolders;
-        const [moved] = pins.splice(this.dragIndex, 1);
-        pins.splice(idx, 0, moved);
-        this.persist();
-        this.draw();
-      });
+      this.updateOverflow();
     });
   }
-  // ── file tree ──
-  drawFolder(el, folder) {
+  updateOverflow() {
+    this.pinBar.toggleClass("has-before", this.pinBar.scrollLeft > 1);
+    this.pinBar.toggleClass("has-after", this.pinBar.scrollLeft + this.pinBar.clientWidth < this.pinBar.scrollWidth - 1);
+  }
+  selectRegion(path) {
     var _a;
-    const expanded = new Set(this.data.expandedFolders);
-    const activePath = (_a = this.app.workspace.getActiveFile()) == null ? void 0 : _a.path;
-    const sorted = [...folder.children].sort((a, b) => {
-      if (a instanceof import_obsidian.TFolder !== b instanceof import_obsidian.TFolder) return a instanceof import_obsidian.TFolder ? -1 : 1;
-      const cmp = a.name.localeCompare(b.name);
-      return this.data.sortOrder === "asc" ? cmp : -cmp;
-    });
-    for (const child of sorted) {
-      if (child instanceof import_obsidian.TFolder) {
-        const open = expanded.has(child.path);
-        const wrap = el.createDiv("fpv-folder");
-        const head = wrap.createDiv("fpv-folder-head");
-        const arrow = head.createSpan("fpv-arrow");
-        (0, import_obsidian.setIcon)(arrow, open ? "chevron-down" : "chevron-right");
-        head.createSpan({ text: child.name });
-        const body = wrap.createDiv("fpv-folder-body");
-        if (open) {
-          body.addClass("is-open");
-          this.drawFolder(body, child);
-        }
-        head.addEventListener("click", () => this.toggle(child.path));
-        head.addEventListener("contextmenu", (e) => this.showFileMenu(e, child));
-      } else if (child instanceof import_obsidian.TFile) {
-        const row = el.createDiv("fpv-file");
-        if (child.path === activePath) row.addClass("is-active");
-        row.createSpan({ text: child.extension === "md" ? child.basename : child.name });
-        row.addEventListener("click", () => void this.app.workspace.getLeaf().openFile(child));
-        row.addEventListener("contextmenu", (e) => this.showFileMenu(e, child));
+    if (((_a = this.editor) == null ? void 0 : _a.busy) || !this.data.pinnedFolders.includes(path)) return;
+    this.captureScroll();
+    this.cancelEditor();
+    this.data.activeFolderPath = path;
+    this.focusedPath = null;
+    this.plugin.persist();
+    this.plugin.refreshViews();
+  }
+  captureScroll() {
+    if (!this.tree || this.renderedZone === null) return;
+    const zone = this.data.zones[this.renderedZone];
+    if (zone) zone.scrollTop = this.tree.scrollTop;
+  }
+  renderTree(capture = true) {
+    var _a, _b, _c;
+    if (!this.tree || this.closed || this.editor) return;
+    if (capture) this.captureScroll();
+    const hadFocus = this.tree.contains(this.contentEl.doc.activeElement);
+    const previousIndex = this.visible.findIndex((file) => file.path === this.focusedPath);
+    this.tree.empty();
+    this.rows.clear();
+    this.visible = [];
+    this.renderedZone = zoneKey(this.data.activeFolderPath);
+    const root = this.rootFolder();
+    if (root) {
+      const expanded = new Set(getZone(this.data).expanded);
+      const compare = comparator(this.data.sortOrder, this.plugin.language === "zh" ? "zh-CN" : "en");
+      const sortInfo = (file) => ({
+        name: file.name,
+        folder: file instanceof import_obsidian.TFolder,
+        mtime: file instanceof import_obsidian.TFile ? file.stat.mtime : 0,
+        ctime: file instanceof import_obsidian.TFile ? file.stat.ctime : 0
+      });
+      const stack = [];
+      const pushChildren = (folder, depth) => {
+        const sorted = [...folder.children].sort((a, b) => compare(sortInfo(a), sortInfo(b)));
+        for (let index = sorted.length - 1; index >= 0; index--)
+          stack.push({ file: sorted[index], depth, index, count: sorted.length });
+      };
+      pushChildren(root, 0);
+      while (stack.length) {
+        const { file, depth, index, count } = stack.pop();
+        this.drawRow(file, depth, index, count, expanded.has(file.path));
+        if (file instanceof import_obsidian.TFolder && expanded.has(file.path)) pushChildren(file, depth + 1);
       }
     }
+    if (!this.visible.length) this.tree.createDiv({ cls: "fpv-empty", text: root ? this.t("empty") : this.t("missing") });
+    if (!this.data.pinnedFolders.length) this.tree.createDiv({ cls: "fpv-empty fpv-hint", text: this.t("pinHint") });
+    this.tree.scrollTop = getZone(this.data).scrollTop;
+    if (!this.focusedPath || !this.rows.has(this.focusedPath)) {
+      const active = (_a = this.app.workspace.getActiveFile()) == null ? void 0 : _a.path;
+      this.focusedPath = active && this.rows.has(active) ? active : (_c = (_b = this.visible[Math.max(0, Math.min(previousIndex, this.visible.length - 1))]) == null ? void 0 : _b.path) != null ? _c : null;
+    }
+    this.updateHighlight();
+    this.updateTabStops();
+    if (hadFocus) this.focusRow(this.focusedPath, false);
+    this.updateToolbar();
   }
-  toggle(path) {
-    const list = this.data.expandedFolders;
-    const at = list.indexOf(path);
-    if (at >= 0) list.splice(at, 1);
-    else list.push(path);
-    this.persist();
-    this.draw();
+  drawRow(file, depth, index, count, expanded) {
+    const folder = file instanceof import_obsidian.TFolder;
+    const row = this.tree.createDiv({
+      cls: "tree-item-self fpv-row" + (folder ? " fpv-folder" : " fpv-file"),
+      attr: {
+        role: "treeitem",
+        tabindex: "-1",
+        "data-path": file.path,
+        "aria-level": String(depth + 1),
+        "aria-posinset": String(index + 1),
+        "aria-setsize": String(count)
+      }
+    });
+    row.style.setProperty("--fpv-depth", String(depth));
+    const arrow = row.createSpan({ cls: "fpv-arrow", attr: { "aria-hidden": "true" } });
+    if (folder) {
+      (0, import_obsidian.setIcon)(arrow, "chevron-right");
+      row.setAttribute("aria-expanded", String(expanded));
+    }
+    row.createSpan({ cls: "fpv-name", text: file instanceof import_obsidian.TFile && file.extension.toLowerCase() === "md" ? file.basename : file.name });
+    (0, import_obsidian.setTooltip)(row, file.path);
+    this.rows.set(file.path, row);
+    this.visible.push(file);
+    row.addEventListener("focus", () => {
+      this.focusedPath = file.path;
+      this.updateTabStops();
+    });
+    row.addEventListener("click", (event) => {
+      if (this.editor) return;
+      this.focusedPath = file.path;
+      if (folder) {
+        row.focus({ preventScroll: true });
+        this.toggleFolder(file.path);
+      } else if (file instanceof import_obsidian.TFile) void this.openFile(file, event.ctrlKey || event.metaKey);
+    });
+    row.addEventListener("auxclick", (event) => {
+      if (event.button === 1 && file instanceof import_obsidian.TFile) {
+        event.preventDefault();
+        void this.openFile(file, true);
+      }
+    });
+    row.addEventListener("contextmenu", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      this.focusedPath = file.path;
+      row.focus({ preventScroll: true });
+      this.fileMenu(file).showAtMouseEvent(event);
+    });
   }
-  // ── context menus ──
-  showRootMenu(e) {
-    e.preventDefault();
-    if (!this.data.activeFolderPath) return;
-    new import_obsidian.Menu().addItem((i) => i.setTitle("New note").setIcon("file-plus").onClick(() => this.createEntry(false, this.data.activeFolderPath))).addItem((i) => i.setTitle("New folder").setIcon("folder-plus").onClick(() => this.createEntry(true, this.data.activeFolderPath))).showAtMouseEvent(e);
+  toggleFolder(path, open) {
+    const zone = getZone(this.data);
+    const expanded = new Set(zone.expanded);
+    if (open != null ? open : !expanded.has(path)) expanded.add(path);
+    else expanded.delete(path);
+    zone.expanded = [...expanded];
+    this.plugin.persist();
+    this.renderTree();
   }
-  showFileMenu(e, file) {
-    e.preventDefault();
+  toggleAll() {
+    if (this.editor) return;
+    const zone = getZone(this.data);
+    if (zone.expanded.length) zone.expanded = [];
+    else {
+      const root = this.rootFolder();
+      const stack = root ? [...root.children] : [];
+      while (stack.length) {
+        const file = stack.pop();
+        if (file instanceof import_obsidian.TFolder) {
+          zone.expanded.push(file.path);
+          for (const child of file.children) stack.push(child);
+        }
+      }
+    }
+    this.plugin.persist();
+    this.renderTree();
+  }
+  activeFileChanged() {
+    var _a, _b;
+    if (!this.tree || this.closed) return;
+    const current = (_b = (_a = this.app.workspace.getActiveFile()) == null ? void 0 : _a.path) != null ? _b : null;
+    this.updateHighlight();
+    if (!current || current === this.lastActive) return;
+    this.lastActive = current;
+    if (this.data.autoReveal && !this.editor) this.revealActive();
+  }
+  revealActive() {
+    const file = this.app.workspace.getActiveFile();
+    if (!file || this.editor || this.closed) return;
+    const target = revealZone(this.data.pinnedFolders, this.data.activeFolderPath, file.path);
+    if (target === void 0) return;
+    const switched = target !== this.data.activeFolderPath;
+    if (switched) {
+      this.captureScroll();
+      this.data.activeFolderPath = target;
+      this.renderPins();
+    }
+    const zone = getZone(this.data);
+    const expanded = new Set(zone.expanded);
+    const size = expanded.size;
+    ancestorPaths(file.path, target).forEach((path) => expanded.add(path));
+    zone.expanded = [...expanded];
+    if (switched || size !== expanded.size || this.renderedZone !== zoneKey(target)) {
+      this.renderPins();
+      this.renderTree(!switched);
+    }
+    if (switched) this.plugin.views().forEach((view) => {
+      if (view !== this) view.sync();
+    });
+    this.updateHighlight();
+    const row = this.rows.get(file.path);
+    if (row) this.revealRow(row);
+    this.lastActive = file.path;
+    this.plugin.persist();
+  }
+  updateHighlight() {
+    var _a;
+    const path = (_a = this.app.workspace.getActiveFile()) == null ? void 0 : _a.path;
+    this.rows.forEach((row, rowPath) => {
+      row.toggleClass("is-active", rowPath === path);
+      row.setAttribute("aria-selected", String(rowPath === path));
+    });
+  }
+  updateTabStops() {
+    this.tree.tabIndex = this.rows.size ? -1 : 0;
+    this.rows.forEach((row, path) => {
+      row.tabIndex = path === this.focusedPath ? 0 : -1;
+    });
+  }
+  revealRow(row) {
+    const viewport = this.tree.getBoundingClientRect();
+    const rect = row.getBoundingClientRect();
+    if (rect.top < viewport.top) this.tree.scrollTop -= viewport.top - rect.top;
+    else if (rect.bottom > viewport.bottom) this.tree.scrollTop += rect.bottom - viewport.bottom;
+    this.captureScroll();
+  }
+  focusRow(path, reveal = true) {
+    this.focusedPath = path;
+    this.updateTabStops();
+    const row = path ? this.rows.get(path) : null;
+    (row != null ? row : this.tree).focus({ preventScroll: true });
+    if (row && reveal) this.revealRow(row);
+  }
+  onTreeKey(event) {
+    var _a;
+    if (this.editor || event.isComposing) return;
+    const index = this.visible.findIndex((file2) => file2.path === this.focusedPath);
+    const file = this.visible[index];
+    if (!file) return;
+    let target;
+    switch (event.key) {
+      case "ArrowDown":
+        target = this.visible[Math.min(index + 1, this.visible.length - 1)];
+        break;
+      case "ArrowUp":
+        target = this.visible[Math.max(index - 1, 0)];
+        break;
+      case "Home":
+        target = this.visible[0];
+        break;
+      case "End":
+        target = this.visible[this.visible.length - 1];
+        break;
+      case "ArrowRight":
+        if (file instanceof import_obsidian.TFolder) {
+          if (!getZone(this.data).expanded.includes(file.path)) this.toggleFolder(file.path, true);
+          else if (((_a = this.visible[index + 1]) == null ? void 0 : _a.parent) === file) target = this.visible[index + 1];
+        }
+        break;
+      case "ArrowLeft":
+        if (file instanceof import_obsidian.TFolder && getZone(this.data).expanded.includes(file.path)) this.toggleFolder(file.path, false);
+        else if (file.parent && this.rows.has(file.parent.path)) target = file.parent;
+        break;
+      case "Enter":
+        if (file instanceof import_obsidian.TFile) void this.openFile(file, event.ctrlKey || event.metaKey);
+        else this.toggleFolder(file.path);
+        break;
+      case "F2":
+        this.startRename(file);
+        break;
+      case "ContextMenu":
+        this.showKeyboardMenu(file);
+        break;
+      case "F10":
+        if (event.shiftKey) this.showKeyboardMenu(file);
+        else return;
+        break;
+      default:
+        return;
+    }
+    event.preventDefault();
+    if (target) this.focusRow(target.path);
+  }
+  showKeyboardMenu(file) {
+    var _a;
+    const rect = (_a = this.rows.get(file.path)) == null ? void 0 : _a.getBoundingClientRect();
+    if (rect) this.fileMenu(file).showAtPosition({ x: rect.left + 24, y: rect.bottom });
+  }
+  async openFile(file, newTab = false) {
+    try {
+      await this.app.workspace.getLeaf(newTab ? "tab" : false).openFile(file);
+    } catch (error) {
+      this.reportError(error);
+    }
+  }
+  creationMenu(menu, parent) {
+    return menu.addItem((item) => item.setTitle(this.t("newNote")).setIcon("square-pen").onClick(() => this.startCreate(false, parent))).addItem((item) => item.setTitle(this.t("newFolder")).setIcon("folder-plus").onClick(() => this.startCreate(true, parent)));
+  }
+  fileMenu(file) {
     const menu = new import_obsidian.Menu();
     if (file instanceof import_obsidian.TFolder) {
+      this.creationMenu(menu, file.path);
       const pinned = this.data.pinnedFolders.includes(file.path);
-      menu.addItem((i) => i.setTitle(pinned ? "Unpin folder" : "Pin folder").setIcon("pin").onClick(() => pinned ? this.unpin(file.path) : this.pin(file.path)));
-      menu.addItem((i) => i.setTitle("New note").setIcon("file-plus").onClick(() => this.createEntry(false, file.path)));
-      menu.addItem((i) => i.setTitle("New folder").setIcon("folder-plus").onClick(() => this.createEntry(true, file.path)));
-      menu.addSeparator();
+      menu.addItem((item) => item.setTitle(this.t(pinned ? "unpin" : "pin")).setIcon(pinned ? "pin-off" : "pin").onClick(() => {
+        void this.plugin.setPinned(file.path, !pinned);
+      }));
+    } else if (file instanceof import_obsidian.TFile) {
+      menu.addItem((item) => item.setTitle(this.t("openTab")).setIcon("file-plus").onClick(() => {
+        void this.openFile(file, true);
+      }));
     }
-    menu.addItem((i) => i.setTitle("Rename").setIcon("pencil").onClick(() => this.renameFile(file)));
-    menu.addItem((i) => i.setTitle("Delete").setIcon("trash").onClick(() => this.deleteFile(file)));
-    menu.showAtMouseEvent(e);
-  }
-  // ── file operations ──
-  createEntry(isFolder, parentPath) {
-    new PromptModal(
-      this.app,
-      isFolder ? "New folder" : "New note",
-      isFolder ? "Folder name" : "Note name",
-      async (name) => {
-        const path = (parentPath ? parentPath + "/" : "") + name + (isFolder ? "" : ".md");
-        if (this.app.vault.getAbstractFileByPath(path)) {
-          new import_obsidian.Notice("Already exists.");
-          return;
-        }
-        try {
-          if (isFolder) {
-            await this.app.vault.createFolder(path);
-          } else {
-            const file = await this.app.vault.create(path, "");
-            await this.app.workspace.getLeaf().openFile(file);
-          }
-        } catch (err) {
-          new import_obsidian.Notice("Could not create: " + String(err));
-        }
-      }
-    ).open();
-  }
-  renameFile(file) {
-    const oldName = file instanceof import_obsidian.TFile ? file.basename : file.name;
-    new PromptModal(this.app, "Rename", oldName, async (newName) => {
-      var _a, _b;
-      const parent = (_b = (_a = file.parent) == null ? void 0 : _a.path) != null ? _b : "";
-      const suffix = file instanceof import_obsidian.TFile ? "." + file.extension : "";
-      const newPath = (parent ? parent + "/" : "") + newName + suffix;
-      try {
-        await this.app.vault.rename(file, newPath);
-      } catch (err) {
-        new import_obsidian.Notice("Rename failed: " + String(err));
-      }
-    }).open();
+    menu.addSeparator();
+    menu.addItem((item) => item.setTitle(this.t("rename")).setIcon("pencil").onClick(() => this.startRename(file)));
+    menu.addItem((item) => item.setTitle(this.t("delete")).setIcon("trash-2").setWarning(true).onClick(() => {
+      void this.deleteFile(file);
+    }));
+    this.app.workspace.trigger("file-menu", menu, file, VIEW_TYPE, this.leaf);
+    return menu;
   }
   async deleteFile(file) {
     try {
-      await this.app.vault.trash(file, true);
-    } catch (err) {
-      new import_obsidian.Notice("Delete failed: " + String(err));
+      if (this.app.vault.getAbstractFileByPath(file.path) !== file) throw new Error(this.t("missing"));
+      if (await this.app.fileManager.promptForDeletion(file)) await this.app.fileManager.trashFile(file);
+    } catch (error) {
+      this.reportError(error);
     }
   }
-  // ── pin management (called by plugin too) ──
-  pin(path) {
-    if (this.data.pinnedFolders.includes(path)) return;
-    this.data.pinnedFolders.push(path);
-    if (!this.data.activeFolderPath) this.data.activeFolderPath = path;
-    this.persist();
-    this.draw();
+  reportError(error) {
+    new import_obsidian.Notice(this.t("operationFailed") + ": " + (error instanceof Error ? error.message : String(error)));
   }
-  unpin(path) {
+  startCreate(folder, parentPath) {
     var _a;
-    this.data.pinnedFolders = this.data.pinnedFolders.filter((p) => p !== path);
-    if (this.data.activeFolderPath === path)
-      this.data.activeFolderPath = (_a = this.data.pinnedFolders[0]) != null ? _a : null;
-    this.persist();
-    this.draw();
+    if ((_a = this.editor) == null ? void 0 : _a.busy) return;
+    this.cancelEditor();
+    const parent = !parentPath || parentPath === "/" ? this.app.vault.getRoot() : this.app.vault.getAbstractFileByPath(parentPath);
+    if (!(parent instanceof import_obsidian.TFolder)) {
+      this.reportError(this.t("missing"));
+      return;
+    }
+    if (!containsPath(this.data.activeFolderPath, parent.path === "/" ? "" : parent.path)) return;
+    if (parent !== this.rootFolder()) {
+      const zone = getZone(this.data);
+      zone.expanded = [.../* @__PURE__ */ new Set([...zone.expanded, ...ancestorPaths(parent.path + "/_", this.data.activeFolderPath)])];
+    }
+    this.renderTree();
+    const defaultName = this.t(folder ? "untitledFolder" : "untitled");
+    let name = defaultName;
+    let count = 1;
+    while (this.app.vault.getAbstractFileByPath(entryPath(parent.path, name, folder ? "" : "md"))) name = defaultName + " " + count++;
+    const host = this.tree.createDiv("fpv-editor-row");
+    const parentRow = this.rows.get(parent.path);
+    if (parentRow) parentRow.after(host);
+    else this.tree.prepend(host);
+    const depth = parentRow ? Number(parentRow.style.getPropertyValue("--fpv-depth")) + 1 : 0;
+    host.style.setProperty("--fpv-depth", String(depth));
+    this.beginEditor(host, name, folder ? "newFolder" : "newNote", async (value) => {
+      if (parent !== this.app.vault.getRoot() && this.app.vault.getAbstractFileByPath(parent.path) !== parent) throw new Error(this.t("missing"));
+      const path = entryPath(parent.path, value, folder ? "" : "md");
+      if (this.app.vault.getAbstractFileByPath(path)) throw new Error(this.t("exists"));
+      const created = folder ? await this.app.vault.createFolder(path) : await this.app.vault.create(path, "");
+      this.focusedPath = path;
+      if (created instanceof import_obsidian.TFile) await this.openFile(created);
+    });
+  }
+  startRename(file) {
+    var _a;
+    if ((_a = this.editor) == null ? void 0 : _a.busy) return;
+    this.cancelEditor();
+    this.renderTree();
+    const row = this.rows.get(file.path);
+    if (!row) return;
+    const host = this.tree.createDiv("fpv-editor-row");
+    host.style.setProperty("--fpv-depth", row.style.getPropertyValue("--fpv-depth"));
+    row.after(host);
+    row.hidden = true;
+    const initial = file instanceof import_obsidian.TFile && file.extension ? file.basename : file.name;
+    this.beginEditor(host, initial, "rename", async (value) => {
+      var _a2, _b;
+      if (this.app.vault.getAbstractFileByPath(file.path) !== file) throw new Error(this.t("missing"));
+      const path = entryPath((_b = (_a2 = file.parent) == null ? void 0 : _a2.path) != null ? _b : "", value, file instanceof import_obsidian.TFile ? file.extension : "");
+      if (path === file.path) return;
+      const existing = this.app.vault.getAbstractFileByPath(path);
+      if (existing && existing !== file) throw new Error(this.t("exists"));
+      await this.app.fileManager.renameFile(file, path);
+      this.focusedPath = path;
+    });
+  }
+  beginEditor(host, initial, key, action) {
+    const input = host.createEl("input", {
+      cls: "fpv-input",
+      type: "text",
+      value: initial,
+      attr: { "aria-label": this.t(key), spellcheck: "false" }
+    });
+    this.tree.querySelectorAll(".fpv-empty").forEach((el) => {
+      el.hidden = true;
+    });
+    const error = host.createDiv({ cls: "fpv-input-message", text: this.t("editHint"), attr: { role: "status", "aria-live": "polite" } });
+    const editor = { el: host, input, busy: false, commit: async () => {
+      if (editor.busy || this.editor !== editor) return;
+      const value = input.value.trim();
+      if (!validName(value)) {
+        error.setText(this.t("invalidName"));
+        input.setAttribute("aria-invalid", "true");
+        input.focus();
+        return;
+      }
+      editor.busy = true;
+      input.disabled = true;
+      try {
+        await action(value);
+        if (this.editor !== editor || this.closed) return;
+        this.editor = null;
+        host.remove();
+        this.renderTree();
+        const row = this.focusedPath ? this.rows.get(this.focusedPath) : null;
+        if (row) this.revealRow(row);
+        if (key !== "newNote") this.focusRow(this.focusedPath, false);
+        this.plugin.persist();
+      } catch (failure) {
+        if (this.editor !== editor || this.closed) return;
+        editor.busy = false;
+        input.disabled = false;
+        error.setText(this.t("operationFailed") + ": " + (failure instanceof Error ? failure.message : String(failure)));
+        input.setAttribute("aria-invalid", "true");
+        input.focus();
+      }
+    } };
+    this.editor = editor;
+    input.addEventListener("keydown", (event) => {
+      event.stopPropagation();
+      if (event.isComposing || event.keyCode === 229) return;
+      if (event.key === "Enter") {
+        event.preventDefault();
+        void editor.commit();
+      } else if (event.key === "Escape" && !editor.busy) {
+        event.preventDefault();
+        this.cancelEditor();
+        this.renderTree();
+        this.focusRow(this.focusedPath, false);
+      }
+    });
+    input.addEventListener("input", () => {
+      input.removeAttribute("aria-invalid");
+      error.setText(this.t("editHint"));
+    });
+    input.focus({ preventScroll: true });
+    input.select();
+    this.revealRow(host);
+  }
+  cancelEditor() {
+    if (!this.editor) return;
+    this.editor.el.remove();
+    this.editor = null;
   }
 };
-var FolderPinPlugin = class extends import_obsidian.Plugin {
+
+// src/main.ts
+var FolderPinPlugin = class extends import_obsidian2.Plugin {
   constructor() {
     super(...arguments);
-    this.data = { ...DEFAULT_DATA };
-    this.save = (0, import_obsidian.debounce)(() => this.saveData(this.data), 400, true);
+    this.data = normalizeData(null);
+    this.writeQueue = Promise.resolve();
+    this.stopping = false;
+    this.t = (key) => translate(this.language, key);
+    this.persist = () => {
+      if (this.stopping) return;
+      if (this.saveTimer) clearTimeout(this.saveTimer);
+      this.saveTimer = setTimeout(() => {
+        this.saveTimer = void 0;
+        this.flushSave();
+      }, 200);
+    };
+  }
+  get language() {
+    return resolveLanguage(this.data.language, (0, import_obsidian2.getLanguage)());
   }
   async onload() {
-    this.data = Object.assign({ ...DEFAULT_DATA }, await this.loadData());
-    this.registerView(
-      VIEW_TYPE,
-      (leaf) => new FolderPinView(leaf, this.data, () => this.save())
-    );
-    this.addRibbonIcon("pin", "Folder Pin View", () => this.activateView());
+    this.data = normalizeData(await this.loadData());
+    this.registerView(VIEW_TYPE, (leaf) => new FolderPinView(leaf, this));
+    this.ribbon = this.addRibbonIcon("pin", this.t("title"), () => {
+      void this.activateView();
+    });
+    this.addCommand({ id: "open-view", name: this.t("openView"), callback: () => {
+      void this.activateView();
+    } });
+    this.addCommand({ id: "reveal-active-file", name: this.t("reveal"), callback: () => {
+      void this.activateView().then(() => this.views().forEach((view) => view.revealActive()));
+    } });
+    this.addSettingTab(new FolderPinSettings(this.app, this));
     this.registerEvent(this.app.workspace.on("file-menu", (menu, file, source) => {
-      if (source === VIEW_TYPE || !(file instanceof import_obsidian.TFolder)) return;
-      menu.addItem((i) => i.setTitle("Pin folder").setIcon("pin").onClick(() => {
-        var _a;
-        return (_a = this.getView()) == null ? void 0 : _a.pin(file.path);
+      if (source === VIEW_TYPE || !(file instanceof import_obsidian2.TFolder) || file.isRoot()) return;
+      const pinned = this.data.pinnedFolders.includes(file.path);
+      menu.addItem((item) => item.setTitle(this.t(pinned ? "unpin" : "pin")).setIcon("pin").onClick(() => {
+        void this.setPinned(file.path, !pinned);
       }));
     }));
-    this.registerEvent(this.app.vault.on("create", () => this.refresh()));
-    this.registerEvent(this.app.vault.on("delete", (f) => {
-      this.onDelete(f.path);
-      this.refresh();
+    this.registerEvent(this.app.vault.on("create", () => this.scheduleRefresh()));
+    this.registerEvent(this.app.vault.on("delete", (file) => {
+      this.views().forEach((view) => view.captureScroll());
+      removePath(this.data, file.path);
+      this.persist();
+      this.refreshViews();
     }));
-    this.registerEvent(this.app.vault.on("rename", (f, old) => {
-      this.onRename(f.path, old);
-      this.refresh();
+    this.registerEvent(this.app.vault.on("rename", (file, oldPath) => {
+      this.views().forEach((view) => view.captureScroll());
+      remapData(this.data, oldPath, file.path);
+      this.persist();
+      this.refreshViews();
     }));
-    this.registerEvent(this.app.workspace.on("file-open", () => this.refresh()));
-    this.app.workspace.onLayoutReady(() => this.activateView());
+    this.registerEvent(this.app.vault.on("modify", (file) => {
+      if (file instanceof import_obsidian2.TFile && this.data.sortOrder.startsWith("mtime")) this.scheduleRefresh();
+    }));
+    this.registerEvent(this.app.workspace.on("file-open", () => this.views().forEach((view) => view.activeFileChanged())));
+    this.registerEvent(this.app.workspace.on("active-leaf-change", () => this.views().forEach((view) => view.activeFileChanged())));
+    this.app.workspace.onLayoutReady(() => {
+      if (this.stopping) return;
+      for (const path of [...this.data.pinnedFolders]) {
+        if (!(this.app.vault.getAbstractFileByPath(path) instanceof import_obsidian2.TFolder)) removePath(this.data, path);
+      }
+      for (const zone of Object.values(this.data.zones))
+        zone.expanded = zone.expanded.filter((path) => this.app.vault.getAbstractFileByPath(path) instanceof import_obsidian2.TFolder);
+      this.refreshViews();
+      if (!this.views().length) void this.activateView(false);
+      this.persist();
+    });
+  }
+  views() {
+    return this.app.workspace.getLeavesOfType(VIEW_TYPE).map((leaf) => leaf.view).filter((view) => view instanceof FolderPinView);
+  }
+  async activateView(reveal = true) {
+    let leaf = this.app.workspace.getLeavesOfType(VIEW_TYPE)[0];
+    if (!leaf) {
+      const created = this.app.workspace.getLeftLeaf(true);
+      if (!created) return;
+      leaf = created;
+      await leaf.setViewState({ type: VIEW_TYPE, active: reveal });
+    }
+    if (reveal) await this.app.workspace.revealLeaf(leaf);
+  }
+  async setPinned(path, pinned) {
+    var _a;
+    if (pinned && !(this.app.vault.getAbstractFileByPath(path) instanceof import_obsidian2.TFolder)) return;
+    this.views().forEach((view) => view.captureScroll());
+    const index = this.data.pinnedFolders.indexOf(path);
+    if (pinned) {
+      if (index === -1) this.data.pinnedFolders.push(path);
+      this.data.activeFolderPath = path;
+    } else {
+      if (index === -1) return;
+      this.data.pinnedFolders.splice(index, 1);
+      delete this.data.zones[zoneKey(path)];
+      if (this.data.activeFolderPath === path)
+        this.data.activeFolderPath = (_a = this.data.pinnedFolders[Math.min(index, this.data.pinnedFolders.length - 1)]) != null ? _a : null;
+    }
+    this.persist();
+    this.refreshViews();
+    if (pinned) await this.activateView();
+  }
+  refreshViews() {
+    this.views().forEach((view) => view.sync());
+  }
+  refreshLanguage() {
+    var _a;
+    (_a = this.ribbon) == null ? void 0 : _a.setAttribute("aria-label", this.t("title"));
+    this.views().forEach((view) => view.localize());
+    this.persist();
+  }
+  scheduleRefresh() {
+    if (this.refreshTimer) clearTimeout(this.refreshTimer);
+    this.refreshTimer = setTimeout(() => {
+      this.refreshTimer = void 0;
+      if (!this.stopping) this.views().forEach((view) => view.renderTree());
+    }, 100);
+  }
+  // Serialize snapshots so a slow previous write cannot overwrite newer settings.
+  flushSave() {
+    if (this.saveTimer) {
+      clearTimeout(this.saveTimer);
+      this.saveTimer = void 0;
+    }
+    const snapshot = JSON.parse(JSON.stringify(this.data));
+    this.writeQueue = this.writeQueue.then(() => this.saveData(snapshot)).catch((error) => {
+      console.error("[folder-pin-view] Settings save failed", error);
+      new import_obsidian2.Notice(this.t("saveFailed"));
+    });
   }
   onunload() {
-  }
-  onDelete(path) {
-    var _a;
-    const gone = (p) => p === path || p.startsWith(path + "/");
-    this.data.pinnedFolders = this.data.pinnedFolders.filter((p) => !gone(p));
-    this.data.expandedFolders = this.data.expandedFolders.filter((p) => !gone(p));
-    if (this.data.activeFolderPath && gone(this.data.activeFolderPath))
-      this.data.activeFolderPath = (_a = this.data.pinnedFolders[0]) != null ? _a : null;
-    this.save();
-  }
-  onRename(path, old) {
-    const remap = (p) => p === old ? path : p.startsWith(old + "/") ? path + p.slice(old.length) : p;
-    this.data.pinnedFolders = this.data.pinnedFolders.map(remap);
-    this.data.expandedFolders = this.data.expandedFolders.map(remap);
-    if (this.data.activeFolderPath) this.data.activeFolderPath = remap(this.data.activeFolderPath);
-    this.save();
-  }
-  refresh() {
-    var _a;
-    (_a = this.getView()) == null ? void 0 : _a.refresh();
-  }
-  async activateView() {
-    var _a;
-    if (this.app.workspace.getLeavesOfType(VIEW_TYPE).length > 0) return;
-    await ((_a = this.app.workspace.getLeftLeaf(false)) == null ? void 0 : _a.setViewState({ type: VIEW_TYPE, active: true }));
-  }
-  getView() {
-    var _a, _b;
-    return (_b = (_a = this.app.workspace.getLeavesOfType(VIEW_TYPE)[0]) == null ? void 0 : _a.view) != null ? _b : null;
+    this.stopping = true;
+    if (this.refreshTimer) clearTimeout(this.refreshTimer);
+    this.views().forEach((view) => view.captureScroll());
+    this.flushSave();
   }
 };
-//# sourceMappingURL=data:application/json;base64,ewogICJ2ZXJzaW9uIjogMywKICAic291cmNlcyI6IFsic3JjL21haW4udHMiXSwKICAic291cmNlc0NvbnRlbnQiOiBbImltcG9ydCB7XG4gICAgQXBwLCBJdGVtVmlldywgTWVudSwgTW9kYWwsIE5vdGljZSwgUGx1Z2luLCBTZXR0aW5nLFxuICAgIFRBYnN0cmFjdEZpbGUsIFRGaWxlLCBURm9sZGVyLCBXb3Jrc3BhY2VMZWFmLCBkZWJvdW5jZSwgc2V0SWNvbixcbn0gZnJvbSAnb2JzaWRpYW4nO1xuXG5jb25zdCBWSUVXX1RZUEUgPSAnZm9sZGVyLXBpbi12aWV3JztcblxuaW50ZXJmYWNlIFBsdWdpbkRhdGEge1xuICAgIHBpbm5lZEZvbGRlcnM6IHN0cmluZ1tdO1xuICAgIGFjdGl2ZUZvbGRlclBhdGg6IHN0cmluZyB8IG51bGw7XG4gICAgZXhwYW5kZWRGb2xkZXJzOiBzdHJpbmdbXTtcbiAgICBzb3J0T3JkZXI6ICdhc2MnIHwgJ2Rlc2MnO1xufVxuXG5jb25zdCBERUZBVUxUX0RBVEE6IFBsdWdpbkRhdGEgPSB7IHBpbm5lZEZvbGRlcnM6IFtdLCBhY3RpdmVGb2xkZXJQYXRoOiBudWxsLCBleHBhbmRlZEZvbGRlcnM6IFtdLCBzb3J0T3JkZXI6ICdhc2MnIH07XG5cbi8vIFx1MjUwMFx1MjUwMCBQcm9tcHQgbW9kYWwgXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXG5cbmNsYXNzIFByb21wdE1vZGFsIGV4dGVuZHMgTW9kYWwge1xuICAgIHByaXZhdGUgdmFsdWU6IHN0cmluZztcblxuICAgIGNvbnN0cnVjdG9yKFxuICAgICAgICBhcHA6IEFwcCxcbiAgICAgICAgcHJpdmF0ZSBoZWFkaW5nOiBzdHJpbmcsXG4gICAgICAgIHByaXZhdGUgaW5pdGlhbDogc3RyaW5nLFxuICAgICAgICBwcml2YXRlIG9uU3VibWl0OiAobmFtZTogc3RyaW5nKSA9PiB2b2lkIHwgUHJvbWlzZTx2b2lkPixcbiAgICApIHsgc3VwZXIoYXBwKTsgdGhpcy52YWx1ZSA9IGluaXRpYWw7IH1cblxuICAgIG9uT3BlbigpIHtcbiAgICAgICAgdGhpcy50aXRsZUVsLnNldFRleHQodGhpcy5oZWFkaW5nKTtcbiAgICAgICAgbmV3IFNldHRpbmcodGhpcy5jb250ZW50RWwpLmFkZFRleHQodCA9PiB7XG4gICAgICAgICAgICB0LnNldFZhbHVlKHRoaXMuaW5pdGlhbCkub25DaGFuZ2UodiA9PiAodGhpcy52YWx1ZSA9IHYpKTtcbiAgICAgICAgICAgIHQuaW5wdXRFbC5zZWxlY3QoKTtcbiAgICAgICAgICAgIHQuaW5wdXRFbC5mb2N1cygpO1xuICAgICAgICAgICAgdC5pbnB1dEVsLmFkZEV2ZW50TGlzdGVuZXIoJ2tleWRvd24nLCBlID0+IHtcbiAgICAgICAgICAgICAgICBpZiAoZS5rZXkgPT09ICdFbnRlcicpIHsgZS5wcmV2ZW50RGVmYXVsdCgpOyB0aGlzLnN1Ym1pdCgpOyB9XG4gICAgICAgICAgICB9KTtcbiAgICAgICAgfSk7XG4gICAgICAgIG5ldyBTZXR0aW5nKHRoaXMuY29udGVudEVsKVxuICAgICAgICAgICAgLmFkZEJ1dHRvbihiID0+IGIuc2V0QnV0dG9uVGV4dCgnT0snKS5zZXRDdGEoKS5vbkNsaWNrKCgpID0+IHRoaXMuc3VibWl0KCkpKTtcbiAgICB9XG5cbiAgICBwcml2YXRlIHN1Ym1pdCgpIHtcbiAgICAgICAgY29uc3QgbmFtZSA9IHRoaXMudmFsdWUudHJpbSgpO1xuICAgICAgICBpZiAoIW5hbWUpIHJldHVybjtcbiAgICAgICAgdGhpcy5jbG9zZSgpO1xuICAgICAgICB2b2lkIHRoaXMub25TdWJtaXQobmFtZSk7XG4gICAgfVxuXG4gICAgb25DbG9zZSgpIHsgdGhpcy5jb250ZW50RWwuZW1wdHkoKTsgfVxufVxuXG4vLyBcdTI1MDBcdTI1MDAgVmlldyBcdTI1MDBcdTI1MDBcdTI1MDBcdTI1MDBcdTI1MDBcdTI1MDBcdTI1MDBcdTI1MDBcdTI1MDBcdTI1MDBcdTI1MDBcdTI1MDBcdTI1MDBcdTI1MDBcdTI1MDBcdTI1MDBcdTI1MDBcdTI1MDBcdTI1MDBcdTI1MDBcdTI1MDBcdTI1MDBcdTI1MDBcdTI1MDBcdTI1MDBcdTI1MDBcdTI1MDBcdTI1MDBcdTI1MDBcdTI1MDBcdTI1MDBcdTI1MDBcdTI1MDBcdTI1MDBcdTI1MDBcdTI1MDBcdTI1MDBcdTI1MDBcdTI1MDBcdTI1MDBcdTI1MDBcdTI1MDBcdTI1MDBcdTI1MDBcdTI1MDBcdTI1MDBcdTI1MDBcdTI1MDBcdTI1MDBcdTI1MDBcdTI1MDBcdTI1MDBcdTI1MDBcdTI1MDBcdTI1MDBcdTI1MDBcdTI1MDBcdTI1MDBcdTI1MDBcdTI1MDBcdTI1MDBcdTI1MDBcdTI1MDBcdTI1MDBcdTI1MDBcdTI1MDBcdTI1MDBcdTI1MDBcdTI1MDBcdTI1MDBcblxuY2xhc3MgRm9sZGVyUGluVmlldyBleHRlbmRzIEl0ZW1WaWV3IHtcbiAgICBwcml2YXRlIGRyYWdJbmRleCA9IC0xO1xuXG4gICAgY29uc3RydWN0b3IoXG4gICAgICAgIGxlYWY6IFdvcmtzcGFjZUxlYWYsXG4gICAgICAgIHByaXZhdGUgZGF0YTogUGx1Z2luRGF0YSxcbiAgICAgICAgcHJpdmF0ZSBwZXJzaXN0OiAoKSA9PiB2b2lkLFxuICAgICkgeyBzdXBlcihsZWFmKTsgfVxuXG4gICAgZ2V0Vmlld1R5cGUoKSAgICB7IHJldHVybiBWSUVXX1RZUEU7IH1cbiAgICBnZXREaXNwbGF5VGV4dCgpIHsgcmV0dXJuICdGb2xkZXIgUGluJzsgfVxuICAgIGdldEljb24oKSAgICAgICAgeyByZXR1cm4gJ3Bpbic7IH1cblxuICAgIGFzeW5jIG9uT3BlbigpICB7IHRoaXMuY29udGVudEVsLmFkZENsYXNzKCdmcHYtcm9vdCcpOyB0aGlzLmRyYXcoKTsgfVxuICAgIGFzeW5jIG9uQ2xvc2UoKSB7fVxuXG4gICAgcmVmcmVzaCA9IGRlYm91bmNlKCgpID0+IHRoaXMuZHJhdygpLCAxMDAsIHRydWUpO1xuXG4gICAgZHJhdygpIHtcbiAgICAgICAgdGhpcy5jb250ZW50RWwuZW1wdHkoKTtcbiAgICAgICAgdGhpcy5kcmF3VG9vbGJhcigpO1xuICAgICAgICB0aGlzLmRyYXdQaW5CYXIoKTtcblxuICAgICAgICBjb25zdCB0cmVlID0gdGhpcy5jb250ZW50RWwuY3JlYXRlRGl2KCdmcHYtdHJlZScpO1xuICAgICAgICB0cmVlLmFkZEV2ZW50TGlzdGVuZXIoJ2NvbnRleHRtZW51JywgZSA9PiB7XG4gICAgICAgICAgICBpZiAoZS50YXJnZXQgPT09IHRyZWUpIHRoaXMuc2hvd1Jvb3RNZW51KGUpO1xuICAgICAgICB9KTtcblxuICAgICAgICBjb25zdCB0YXJnZXQgPSB0aGlzLmRhdGEuYWN0aXZlRm9sZGVyUGF0aFxuICAgICAgICAgICAgPyB0aGlzLmFwcC52YXVsdC5nZXRBYnN0cmFjdEZpbGVCeVBhdGgodGhpcy5kYXRhLmFjdGl2ZUZvbGRlclBhdGgpXG4gICAgICAgICAgICA6IHRoaXMuYXBwLnZhdWx0LmdldFJvb3QoKTtcblxuICAgICAgICBpZiAodGFyZ2V0IGluc3RhbmNlb2YgVEZvbGRlcikgdGhpcy5kcmF3Rm9sZGVyKHRyZWUsIHRhcmdldCk7XG4gICAgICAgIGVsc2UgdHJlZS5jcmVhdGVEaXYoeyBjbHM6ICdmcHYtZW1wdHknLCB0ZXh0OiAnUmlnaHQtY2xpY2sgYSBmb2xkZXIgYW5kIGNob29zZSBcIlBpbiBmb2xkZXJcIi4nIH0pO1xuICAgIH1cblxuICAgIC8vIFx1MjUwMFx1MjUwMCB0b29sYmFyIFx1MjUwMFx1MjUwMFxuXG4gICAgcHJpdmF0ZSBkcmF3VG9vbGJhcigpIHtcbiAgICAgICAgY29uc3QgYmFyID0gdGhpcy5jb250ZW50RWwuY3JlYXRlRGl2KCdmcHYtdG9vbGJhcicpO1xuICAgICAgICBjb25zdCBidG4gPSAoaWNvbjogc3RyaW5nLCBsYWJlbDogc3RyaW5nLCBmbjogKCkgPT4gdm9pZCkgPT4ge1xuICAgICAgICAgICAgY29uc3QgYiA9IGJhci5jcmVhdGVEaXYoeyBjbHM6ICdmcHYtdG9vbCcsIGF0dHI6IHsgJ2FyaWEtbGFiZWwnOiBsYWJlbCB9IH0pO1xuICAgICAgICAgICAgc2V0SWNvbihiLCBpY29uKTtcbiAgICAgICAgICAgIGIuYWRkRXZlbnRMaXN0ZW5lcignY2xpY2snLCBmbik7XG4gICAgICAgIH07XG4gICAgICAgIGNvbnN0IGJhc2UgPSB0aGlzLmRhdGEuYWN0aXZlRm9sZGVyUGF0aCA/PyAnJztcbiAgICAgICAgYnRuKCdzcXVhcmUtcGVuJywgICAgJ05ldyBub3RlJywgICAgICAgKCkgPT4gdGhpcy5jcmVhdGVFbnRyeShmYWxzZSwgYmFzZSkpO1xuICAgICAgICBidG4oJ2ZvbGRlci1wbHVzJywgICAnTmV3IGZvbGRlcicsICAgICAoKSA9PiB0aGlzLmNyZWF0ZUVudHJ5KHRydWUsIGJhc2UpKTtcbiAgICAgICAgYnRuKCdhcnJvdy11cC1heicsICAgJ1NvcnQgJyArICh0aGlzLmRhdGEuc29ydE9yZGVyID09PSAnYXNjJyA/ICdaXHUyMTkyQScgOiAnQVx1MjE5MlonKSwgKCkgPT4ge1xuICAgICAgICAgICAgdGhpcy5kYXRhLnNvcnRPcmRlciA9IHRoaXMuZGF0YS5zb3J0T3JkZXIgPT09ICdhc2MnID8gJ2Rlc2MnIDogJ2FzYyc7XG4gICAgICAgICAgICB0aGlzLnBlcnNpc3QoKTtcbiAgICAgICAgICAgIHRoaXMuZHJhdygpO1xuICAgICAgICB9KTtcbiAgICAgICAgYnRuKCdjaGV2cm9ucy11cC1kb3duJywgJ0V4cGFuZCBhbGwnLCAgKCkgPT4gdGhpcy5leHBhbmRBbGwoKSk7XG4gICAgICAgIGJ0bignY2hldnJvbnMtZG93bi11cCcsICdDb2xsYXBzZSBhbGwnLCgpID0+IHRoaXMuY29sbGFwc2VBbGwoKSk7XG4gICAgfVxuXG4gICAgcHJpdmF0ZSBleHBhbmRBbGwoKSB7XG4gICAgICAgIGNvbnN0IHRhcmdldCA9IHRoaXMuZGF0YS5hY3RpdmVGb2xkZXJQYXRoXG4gICAgICAgICAgICA/IHRoaXMuYXBwLnZhdWx0LmdldEFic3RyYWN0RmlsZUJ5UGF0aCh0aGlzLmRhdGEuYWN0aXZlRm9sZGVyUGF0aClcbiAgICAgICAgICAgIDogdGhpcy5hcHAudmF1bHQuZ2V0Um9vdCgpO1xuICAgICAgICBpZiAoISh0YXJnZXQgaW5zdGFuY2VvZiBURm9sZGVyKSkgcmV0dXJuO1xuICAgICAgICBjb25zdCBjb2xsZWN0ID0gKGY6IFRGb2xkZXIpID0+IHtcbiAgICAgICAgICAgIGZvciAoY29uc3QgY2hpbGQgb2YgZi5jaGlsZHJlbikge1xuICAgICAgICAgICAgICAgIGlmIChjaGlsZCBpbnN0YW5jZW9mIFRGb2xkZXIpIHsgdGhpcy5kYXRhLmV4cGFuZGVkRm9sZGVycy5wdXNoKGNoaWxkLnBhdGgpOyBjb2xsZWN0KGNoaWxkKTsgfVxuICAgICAgICAgICAgfVxuICAgICAgICB9O1xuICAgICAgICB0aGlzLmRhdGEuZXhwYW5kZWRGb2xkZXJzID0gW107XG4gICAgICAgIGNvbGxlY3QodGFyZ2V0KTtcbiAgICAgICAgdGhpcy5wZXJzaXN0KCk7XG4gICAgICAgIHRoaXMuZHJhdygpO1xuICAgIH1cblxuICAgIHByaXZhdGUgY29sbGFwc2VBbGwoKSB7XG4gICAgICAgIHRoaXMuZGF0YS5leHBhbmRlZEZvbGRlcnMgPSBbXTtcbiAgICAgICAgdGhpcy5wZXJzaXN0KCk7XG4gICAgICAgIHRoaXMuZHJhdygpO1xuICAgIH1cblxuICAgIC8vIFx1MjUwMFx1MjUwMCBwaW4gYmFyIFx1MjUwMFx1MjUwMFxuXG4gICAgcHJpdmF0ZSBkcmF3UGluQmFyKCkge1xuICAgICAgICBjb25zdCBiYXIgPSB0aGlzLmNvbnRlbnRFbC5jcmVhdGVEaXYoJ2Zwdi1iYXInKTtcbiAgICAgICAgdGhpcy5kYXRhLnBpbm5lZEZvbGRlcnMuZm9yRWFjaCgocGF0aCwgaWR4KSA9PiB7XG4gICAgICAgICAgICBjb25zdCBidG4gPSBiYXIuY3JlYXRlRWwoJ2J1dHRvbicsIHtcbiAgICAgICAgICAgICAgICBjbHM6ICdmcHYtYnRuJyxcbiAgICAgICAgICAgICAgICB0ZXh0OiBwYXRoLnNwbGl0KCcvJykucG9wKCkgfHwgcGF0aCxcbiAgICAgICAgICAgICAgICB0aXRsZTogcGF0aCxcbiAgICAgICAgICAgICAgICBhdHRyOiB7IGRyYWdnYWJsZTogJ3RydWUnIH0sXG4gICAgICAgICAgICB9KTtcbiAgICAgICAgICAgIGlmIChwYXRoID09PSB0aGlzLmRhdGEuYWN0aXZlRm9sZGVyUGF0aCkgYnRuLmFkZENsYXNzKCdpcy1hY3RpdmUnKTtcblxuICAgICAgICAgICAgYnRuLmFkZEV2ZW50TGlzdGVuZXIoJ2NsaWNrJywgKCkgPT4ge1xuICAgICAgICAgICAgICAgIHRoaXMuZGF0YS5hY3RpdmVGb2xkZXJQYXRoID0gcGF0aDtcbiAgICAgICAgICAgICAgICB0aGlzLnBlcnNpc3QoKTtcbiAgICAgICAgICAgICAgICB0aGlzLmRyYXcoKTtcbiAgICAgICAgICAgIH0pO1xuICAgICAgICAgICAgYnRuLmFkZEV2ZW50TGlzdGVuZXIoJ2NvbnRleHRtZW51JywgZSA9PiB7XG4gICAgICAgICAgICAgICAgZS5wcmV2ZW50RGVmYXVsdCgpO1xuICAgICAgICAgICAgICAgIG5ldyBNZW51KClcbiAgICAgICAgICAgICAgICAgICAgLmFkZEl0ZW0oaSA9PiBpLnNldFRpdGxlKCdVbnBpbicpLnNldEljb24oJ3gnKS5vbkNsaWNrKCgpID0+IHRoaXMudW5waW4ocGF0aCkpKVxuICAgICAgICAgICAgICAgICAgICAuc2hvd0F0TW91c2VFdmVudChlKTtcbiAgICAgICAgICAgIH0pO1xuXG4gICAgICAgICAgICAvLyBkcmFnLXRvLXJlb3JkZXJcbiAgICAgICAgICAgIGJ0bi5hZGRFdmVudExpc3RlbmVyKCdkcmFnc3RhcnQnLCAoKSA9PiB7IHRoaXMuZHJhZ0luZGV4ID0gaWR4OyBidG4uYWRkQ2xhc3MoJ2lzLWRyYWdnaW5nJyk7IH0pO1xuICAgICAgICAgICAgYnRuLmFkZEV2ZW50TGlzdGVuZXIoJ2RyYWdlbmQnLCAgICgpID0+IHsgdGhpcy5kcmFnSW5kZXggPSAtMTsgIGJ0bi5yZW1vdmVDbGFzcygnaXMtZHJhZ2dpbmcnKTsgfSk7XG4gICAgICAgICAgICBidG4uYWRkRXZlbnRMaXN0ZW5lcignZHJhZ292ZXInLCAgZSA9PiB7IGUucHJldmVudERlZmF1bHQoKTsgYnRuLmFkZENsYXNzKCdkcmFnLW92ZXInKTsgfSk7XG4gICAgICAgICAgICBidG4uYWRkRXZlbnRMaXN0ZW5lcignZHJhZ2xlYXZlJywgKCkgPT4gYnRuLnJlbW92ZUNsYXNzKCdkcmFnLW92ZXInKSk7XG4gICAgICAgICAgICBidG4uYWRkRXZlbnRMaXN0ZW5lcignZHJvcCcsIGUgPT4ge1xuICAgICAgICAgICAgICAgIGUucHJldmVudERlZmF1bHQoKTtcbiAgICAgICAgICAgICAgICBidG4ucmVtb3ZlQ2xhc3MoJ2RyYWctb3ZlcicpO1xuICAgICAgICAgICAgICAgIGlmICh0aGlzLmRyYWdJbmRleCA8IDAgfHwgdGhpcy5kcmFnSW5kZXggPT09IGlkeCkgcmV0dXJuO1xuICAgICAgICAgICAgICAgIGNvbnN0IHBpbnMgPSB0aGlzLmRhdGEucGlubmVkRm9sZGVycztcbiAgICAgICAgICAgICAgICBjb25zdCBbbW92ZWRdID0gcGlucy5zcGxpY2UodGhpcy5kcmFnSW5kZXgsIDEpO1xuICAgICAgICAgICAgICAgIHBpbnMuc3BsaWNlKGlkeCwgMCwgbW92ZWQpO1xuICAgICAgICAgICAgICAgIHRoaXMucGVyc2lzdCgpO1xuICAgICAgICAgICAgICAgIHRoaXMuZHJhdygpO1xuICAgICAgICAgICAgfSk7XG4gICAgICAgIH0pO1xuICAgIH1cblxuICAgIC8vIFx1MjUwMFx1MjUwMCBmaWxlIHRyZWUgXHUyNTAwXHUyNTAwXG5cbiAgICBwcml2YXRlIGRyYXdGb2xkZXIoZWw6IEhUTUxFbGVtZW50LCBmb2xkZXI6IFRGb2xkZXIpIHtcbiAgICAgICAgY29uc3QgZXhwYW5kZWQgPSBuZXcgU2V0KHRoaXMuZGF0YS5leHBhbmRlZEZvbGRlcnMpO1xuICAgICAgICBjb25zdCBhY3RpdmVQYXRoID0gdGhpcy5hcHAud29ya3NwYWNlLmdldEFjdGl2ZUZpbGUoKT8ucGF0aDtcblxuICAgICAgICBjb25zdCBzb3J0ZWQgPSBbLi4uZm9sZGVyLmNoaWxkcmVuXS5zb3J0KChhLCBiKSA9PiB7XG4gICAgICAgICAgICBpZiAoKGEgaW5zdGFuY2VvZiBURm9sZGVyKSAhPT0gKGIgaW5zdGFuY2VvZiBURm9sZGVyKSkgcmV0dXJuIGEgaW5zdGFuY2VvZiBURm9sZGVyID8gLTEgOiAxO1xuICAgICAgICAgICAgY29uc3QgY21wID0gYS5uYW1lLmxvY2FsZUNvbXBhcmUoYi5uYW1lKTtcbiAgICAgICAgICAgIHJldHVybiB0aGlzLmRhdGEuc29ydE9yZGVyID09PSAnYXNjJyA/IGNtcCA6IC1jbXA7XG4gICAgICAgIH0pO1xuXG4gICAgICAgIGZvciAoY29uc3QgY2hpbGQgb2Ygc29ydGVkKSB7XG4gICAgICAgICAgICBpZiAoY2hpbGQgaW5zdGFuY2VvZiBURm9sZGVyKSB7XG4gICAgICAgICAgICAgICAgY29uc3Qgb3BlbiA9IGV4cGFuZGVkLmhhcyhjaGlsZC5wYXRoKTtcbiAgICAgICAgICAgICAgICBjb25zdCB3cmFwID0gZWwuY3JlYXRlRGl2KCdmcHYtZm9sZGVyJyk7XG4gICAgICAgICAgICAgICAgY29uc3QgaGVhZCA9IHdyYXAuY3JlYXRlRGl2KCdmcHYtZm9sZGVyLWhlYWQnKTtcbiAgICAgICAgICAgICAgICBjb25zdCBhcnJvdyA9IGhlYWQuY3JlYXRlU3BhbignZnB2LWFycm93Jyk7XG4gICAgICAgICAgICAgICAgc2V0SWNvbihhcnJvdywgb3BlbiA/ICdjaGV2cm9uLWRvd24nIDogJ2NoZXZyb24tcmlnaHQnKTtcbiAgICAgICAgICAgICAgICBoZWFkLmNyZWF0ZVNwYW4oeyB0ZXh0OiBjaGlsZC5uYW1lIH0pO1xuXG4gICAgICAgICAgICAgICAgY29uc3QgYm9keSA9IHdyYXAuY3JlYXRlRGl2KCdmcHYtZm9sZGVyLWJvZHknKTtcbiAgICAgICAgICAgICAgICBpZiAob3BlbikgeyBib2R5LmFkZENsYXNzKCdpcy1vcGVuJyk7IHRoaXMuZHJhd0ZvbGRlcihib2R5LCBjaGlsZCk7IH1cblxuICAgICAgICAgICAgICAgIGhlYWQuYWRkRXZlbnRMaXN0ZW5lcignY2xpY2snLCAoKSA9PiB0aGlzLnRvZ2dsZShjaGlsZC5wYXRoKSk7XG4gICAgICAgICAgICAgICAgaGVhZC5hZGRFdmVudExpc3RlbmVyKCdjb250ZXh0bWVudScsIGUgPT4gdGhpcy5zaG93RmlsZU1lbnUoZSwgY2hpbGQpKTtcbiAgICAgICAgICAgIH0gZWxzZSBpZiAoY2hpbGQgaW5zdGFuY2VvZiBURmlsZSkge1xuICAgICAgICAgICAgICAgIGNvbnN0IHJvdyA9IGVsLmNyZWF0ZURpdignZnB2LWZpbGUnKTtcbiAgICAgICAgICAgICAgICBpZiAoY2hpbGQucGF0aCA9PT0gYWN0aXZlUGF0aCkgcm93LmFkZENsYXNzKCdpcy1hY3RpdmUnKTtcbiAgICAgICAgICAgICAgICByb3cuY3JlYXRlU3Bhbih7IHRleHQ6IGNoaWxkLmV4dGVuc2lvbiA9PT0gJ21kJyA/IGNoaWxkLmJhc2VuYW1lIDogY2hpbGQubmFtZSB9KTtcbiAgICAgICAgICAgICAgICByb3cuYWRkRXZlbnRMaXN0ZW5lcignY2xpY2snLCAoKSA9PiB2b2lkIHRoaXMuYXBwLndvcmtzcGFjZS5nZXRMZWFmKCkub3BlbkZpbGUoY2hpbGQpKTtcbiAgICAgICAgICAgICAgICByb3cuYWRkRXZlbnRMaXN0ZW5lcignY29udGV4dG1lbnUnLCBlID0+IHRoaXMuc2hvd0ZpbGVNZW51KGUsIGNoaWxkKSk7XG4gICAgICAgICAgICB9XG4gICAgICAgIH1cbiAgICB9XG5cbiAgICBwcml2YXRlIHRvZ2dsZShwYXRoOiBzdHJpbmcpIHtcbiAgICAgICAgY29uc3QgbGlzdCA9IHRoaXMuZGF0YS5leHBhbmRlZEZvbGRlcnM7XG4gICAgICAgIGNvbnN0IGF0ID0gbGlzdC5pbmRleE9mKHBhdGgpO1xuICAgICAgICBpZiAoYXQgPj0gMCkgbGlzdC5zcGxpY2UoYXQsIDEpOyBlbHNlIGxpc3QucHVzaChwYXRoKTtcbiAgICAgICAgdGhpcy5wZXJzaXN0KCk7XG4gICAgICAgIHRoaXMuZHJhdygpO1xuICAgIH1cblxuICAgIC8vIFx1MjUwMFx1MjUwMCBjb250ZXh0IG1lbnVzIFx1MjUwMFx1MjUwMFxuXG4gICAgcHJpdmF0ZSBzaG93Um9vdE1lbnUoZTogTW91c2VFdmVudCkge1xuICAgICAgICBlLnByZXZlbnREZWZhdWx0KCk7XG4gICAgICAgIGlmICghdGhpcy5kYXRhLmFjdGl2ZUZvbGRlclBhdGgpIHJldHVybjtcbiAgICAgICAgbmV3IE1lbnUoKVxuICAgICAgICAgICAgLmFkZEl0ZW0oaSA9PiBpLnNldFRpdGxlKCdOZXcgbm90ZScpLnNldEljb24oJ2ZpbGUtcGx1cycpXG4gICAgICAgICAgICAgICAgLm9uQ2xpY2soKCkgPT4gdGhpcy5jcmVhdGVFbnRyeShmYWxzZSwgdGhpcy5kYXRhLmFjdGl2ZUZvbGRlclBhdGghKSkpXG4gICAgICAgICAgICAuYWRkSXRlbShpID0+IGkuc2V0VGl0bGUoJ05ldyBmb2xkZXInKS5zZXRJY29uKCdmb2xkZXItcGx1cycpXG4gICAgICAgICAgICAgICAgLm9uQ2xpY2soKCkgPT4gdGhpcy5jcmVhdGVFbnRyeSh0cnVlLCB0aGlzLmRhdGEuYWN0aXZlRm9sZGVyUGF0aCEpKSlcbiAgICAgICAgICAgIC5zaG93QXRNb3VzZUV2ZW50KGUpO1xuICAgIH1cblxuICAgIHByaXZhdGUgc2hvd0ZpbGVNZW51KGU6IE1vdXNlRXZlbnQsIGZpbGU6IFRBYnN0cmFjdEZpbGUpIHtcbiAgICAgICAgZS5wcmV2ZW50RGVmYXVsdCgpO1xuICAgICAgICBjb25zdCBtZW51ID0gbmV3IE1lbnUoKTtcblxuICAgICAgICBpZiAoZmlsZSBpbnN0YW5jZW9mIFRGb2xkZXIpIHtcbiAgICAgICAgICAgIGNvbnN0IHBpbm5lZCA9IHRoaXMuZGF0YS5waW5uZWRGb2xkZXJzLmluY2x1ZGVzKGZpbGUucGF0aCk7XG4gICAgICAgICAgICBtZW51LmFkZEl0ZW0oaSA9PiBpXG4gICAgICAgICAgICAgICAgLnNldFRpdGxlKHBpbm5lZCA/ICdVbnBpbiBmb2xkZXInIDogJ1BpbiBmb2xkZXInKS5zZXRJY29uKCdwaW4nKVxuICAgICAgICAgICAgICAgIC5vbkNsaWNrKCgpID0+IHBpbm5lZCA/IHRoaXMudW5waW4oZmlsZS5wYXRoKSA6IHRoaXMucGluKGZpbGUucGF0aCkpKTtcbiAgICAgICAgICAgIG1lbnUuYWRkSXRlbShpID0+IGkuc2V0VGl0bGUoJ05ldyBub3RlJykuc2V0SWNvbignZmlsZS1wbHVzJylcbiAgICAgICAgICAgICAgICAub25DbGljaygoKSA9PiB0aGlzLmNyZWF0ZUVudHJ5KGZhbHNlLCBmaWxlLnBhdGgpKSk7XG4gICAgICAgICAgICBtZW51LmFkZEl0ZW0oaSA9PiBpLnNldFRpdGxlKCdOZXcgZm9sZGVyJykuc2V0SWNvbignZm9sZGVyLXBsdXMnKVxuICAgICAgICAgICAgICAgIC5vbkNsaWNrKCgpID0+IHRoaXMuY3JlYXRlRW50cnkodHJ1ZSwgZmlsZS5wYXRoKSkpO1xuICAgICAgICAgICAgbWVudS5hZGRTZXBhcmF0b3IoKTtcbiAgICAgICAgfVxuXG4gICAgICAgIG1lbnUuYWRkSXRlbShpID0+IGkuc2V0VGl0bGUoJ1JlbmFtZScpLnNldEljb24oJ3BlbmNpbCcpLm9uQ2xpY2soKCkgPT4gdGhpcy5yZW5hbWVGaWxlKGZpbGUpKSk7XG4gICAgICAgIG1lbnUuYWRkSXRlbShpID0+IGkuc2V0VGl0bGUoJ0RlbGV0ZScpLnNldEljb24oJ3RyYXNoJykub25DbGljaygoKSA9PiB0aGlzLmRlbGV0ZUZpbGUoZmlsZSkpKTtcblxuICAgICAgICBtZW51LnNob3dBdE1vdXNlRXZlbnQoZSk7XG4gICAgfVxuXG4gICAgLy8gXHUyNTAwXHUyNTAwIGZpbGUgb3BlcmF0aW9ucyBcdTI1MDBcdTI1MDBcblxuICAgIHByaXZhdGUgY3JlYXRlRW50cnkoaXNGb2xkZXI6IGJvb2xlYW4sIHBhcmVudFBhdGg6IHN0cmluZykge1xuICAgICAgICBuZXcgUHJvbXB0TW9kYWwoXG4gICAgICAgICAgICB0aGlzLmFwcCxcbiAgICAgICAgICAgIGlzRm9sZGVyID8gJ05ldyBmb2xkZXInIDogJ05ldyBub3RlJyxcbiAgICAgICAgICAgIGlzRm9sZGVyID8gJ0ZvbGRlciBuYW1lJyA6ICdOb3RlIG5hbWUnLFxuICAgICAgICAgICAgYXN5bmMgbmFtZSA9PiB7XG4gICAgICAgICAgICAgICAgY29uc3QgcGF0aCA9IChwYXJlbnRQYXRoID8gcGFyZW50UGF0aCArICcvJyA6ICcnKSArIG5hbWUgKyAoaXNGb2xkZXIgPyAnJyA6ICcubWQnKTtcbiAgICAgICAgICAgICAgICBpZiAodGhpcy5hcHAudmF1bHQuZ2V0QWJzdHJhY3RGaWxlQnlQYXRoKHBhdGgpKSB7IG5ldyBOb3RpY2UoJ0FscmVhZHkgZXhpc3RzLicpOyByZXR1cm47IH1cbiAgICAgICAgICAgICAgICB0cnkge1xuICAgICAgICAgICAgICAgICAgICBpZiAoaXNGb2xkZXIpIHtcbiAgICAgICAgICAgICAgICAgICAgICAgIGF3YWl0IHRoaXMuYXBwLnZhdWx0LmNyZWF0ZUZvbGRlcihwYXRoKTtcbiAgICAgICAgICAgICAgICAgICAgfSBlbHNlIHtcbiAgICAgICAgICAgICAgICAgICAgICAgIGNvbnN0IGZpbGUgPSBhd2FpdCB0aGlzLmFwcC52YXVsdC5jcmVhdGUocGF0aCwgJycpO1xuICAgICAgICAgICAgICAgICAgICAgICAgYXdhaXQgdGhpcy5hcHAud29ya3NwYWNlLmdldExlYWYoKS5vcGVuRmlsZShmaWxlKTtcbiAgICAgICAgICAgICAgICAgICAgfVxuICAgICAgICAgICAgICAgIH0gY2F0Y2ggKGVycikgeyBuZXcgTm90aWNlKCdDb3VsZCBub3QgY3JlYXRlOiAnICsgU3RyaW5nKGVycikpOyB9XG4gICAgICAgICAgICB9LFxuICAgICAgICApLm9wZW4oKTtcbiAgICB9XG5cbiAgICBwcml2YXRlIHJlbmFtZUZpbGUoZmlsZTogVEFic3RyYWN0RmlsZSkge1xuICAgICAgICBjb25zdCBvbGROYW1lID0gZmlsZSBpbnN0YW5jZW9mIFRGaWxlID8gZmlsZS5iYXNlbmFtZSA6IGZpbGUubmFtZTtcbiAgICAgICAgbmV3IFByb21wdE1vZGFsKHRoaXMuYXBwLCAnUmVuYW1lJywgb2xkTmFtZSwgYXN5bmMgbmV3TmFtZSA9PiB7XG4gICAgICAgICAgICBjb25zdCBwYXJlbnQgPSBmaWxlLnBhcmVudD8ucGF0aCA/PyAnJztcbiAgICAgICAgICAgIGNvbnN0IHN1ZmZpeCA9IGZpbGUgaW5zdGFuY2VvZiBURmlsZSA/ICcuJyArIGZpbGUuZXh0ZW5zaW9uIDogJyc7XG4gICAgICAgICAgICBjb25zdCBuZXdQYXRoID0gKHBhcmVudCA/IHBhcmVudCArICcvJyA6ICcnKSArIG5ld05hbWUgKyBzdWZmaXg7XG4gICAgICAgICAgICB0cnkgeyBhd2FpdCB0aGlzLmFwcC52YXVsdC5yZW5hbWUoZmlsZSwgbmV3UGF0aCk7IH1cbiAgICAgICAgICAgIGNhdGNoIChlcnIpIHsgbmV3IE5vdGljZSgnUmVuYW1lIGZhaWxlZDogJyArIFN0cmluZyhlcnIpKTsgfVxuICAgICAgICB9KS5vcGVuKCk7XG4gICAgfVxuXG4gICAgcHJpdmF0ZSBhc3luYyBkZWxldGVGaWxlKGZpbGU6IFRBYnN0cmFjdEZpbGUpIHtcbiAgICAgICAgdHJ5IHsgYXdhaXQgdGhpcy5hcHAudmF1bHQudHJhc2goZmlsZSwgdHJ1ZSk7IH1cbiAgICAgICAgY2F0Y2ggKGVycikgeyBuZXcgTm90aWNlKCdEZWxldGUgZmFpbGVkOiAnICsgU3RyaW5nKGVycikpOyB9XG4gICAgfVxuXG4gICAgLy8gXHUyNTAwXHUyNTAwIHBpbiBtYW5hZ2VtZW50IChjYWxsZWQgYnkgcGx1Z2luIHRvbykgXHUyNTAwXHUyNTAwXG5cbiAgICBwaW4ocGF0aDogc3RyaW5nKSB7XG4gICAgICAgIGlmICh0aGlzLmRhdGEucGlubmVkRm9sZGVycy5pbmNsdWRlcyhwYXRoKSkgcmV0dXJuO1xuICAgICAgICB0aGlzLmRhdGEucGlubmVkRm9sZGVycy5wdXNoKHBhdGgpO1xuICAgICAgICBpZiAoIXRoaXMuZGF0YS5hY3RpdmVGb2xkZXJQYXRoKSB0aGlzLmRhdGEuYWN0aXZlRm9sZGVyUGF0aCA9IHBhdGg7XG4gICAgICAgIHRoaXMucGVyc2lzdCgpO1xuICAgICAgICB0aGlzLmRyYXcoKTtcbiAgICB9XG5cbiAgICBwcml2YXRlIHVucGluKHBhdGg6IHN0cmluZykge1xuICAgICAgICB0aGlzLmRhdGEucGlubmVkRm9sZGVycyA9IHRoaXMuZGF0YS5waW5uZWRGb2xkZXJzLmZpbHRlcihwID0+IHAgIT09IHBhdGgpO1xuICAgICAgICBpZiAodGhpcy5kYXRhLmFjdGl2ZUZvbGRlclBhdGggPT09IHBhdGgpXG4gICAgICAgICAgICB0aGlzLmRhdGEuYWN0aXZlRm9sZGVyUGF0aCA9IHRoaXMuZGF0YS5waW5uZWRGb2xkZXJzWzBdID8/IG51bGw7XG4gICAgICAgIHRoaXMucGVyc2lzdCgpO1xuICAgICAgICB0aGlzLmRyYXcoKTtcbiAgICB9XG59XG5cbi8vIFx1MjUwMFx1MjUwMCBQbHVnaW4gXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXHUyNTAwXG5cbmV4cG9ydCBkZWZhdWx0IGNsYXNzIEZvbGRlclBpblBsdWdpbiBleHRlbmRzIFBsdWdpbiB7XG4gICAgZGF0YTogUGx1Z2luRGF0YSA9IHsgLi4uREVGQVVMVF9EQVRBIH07XG4gICAgcHJpdmF0ZSBzYXZlID0gZGVib3VuY2UoKCkgPT4gdGhpcy5zYXZlRGF0YSh0aGlzLmRhdGEpLCA0MDAsIHRydWUpO1xuXG4gICAgYXN5bmMgb25sb2FkKCkge1xuICAgICAgICB0aGlzLmRhdGEgPSBPYmplY3QuYXNzaWduKHsgLi4uREVGQVVMVF9EQVRBIH0sIGF3YWl0IHRoaXMubG9hZERhdGEoKSBhcyBQYXJ0aWFsPFBsdWdpbkRhdGE+KTtcblxuICAgICAgICB0aGlzLnJlZ2lzdGVyVmlldyhWSUVXX1RZUEUsIGxlYWYgPT5cbiAgICAgICAgICAgIG5ldyBGb2xkZXJQaW5WaWV3KGxlYWYsIHRoaXMuZGF0YSwgKCkgPT4gdGhpcy5zYXZlKCkpXG4gICAgICAgICk7XG4gICAgICAgIHRoaXMuYWRkUmliYm9uSWNvbigncGluJywgJ0ZvbGRlciBQaW4gVmlldycsICgpID0+IHRoaXMuYWN0aXZhdGVWaWV3KCkpO1xuXG4gICAgICAgIHRoaXMucmVnaXN0ZXJFdmVudCh0aGlzLmFwcC53b3Jrc3BhY2Uub24oJ2ZpbGUtbWVudScsIChtZW51LCBmaWxlLCBzb3VyY2UpID0+IHtcbiAgICAgICAgICAgIGlmIChzb3VyY2UgPT09IFZJRVdfVFlQRSB8fCAhKGZpbGUgaW5zdGFuY2VvZiBURm9sZGVyKSkgcmV0dXJuO1xuICAgICAgICAgICAgbWVudS5hZGRJdGVtKGkgPT4gaS5zZXRUaXRsZSgnUGluIGZvbGRlcicpLnNldEljb24oJ3BpbicpXG4gICAgICAgICAgICAgICAgLm9uQ2xpY2soKCkgPT4gdGhpcy5nZXRWaWV3KCk/LnBpbihmaWxlLnBhdGgpKSk7XG4gICAgICAgIH0pKTtcblxuICAgICAgICB0aGlzLnJlZ2lzdGVyRXZlbnQodGhpcy5hcHAudmF1bHQub24oJ2NyZWF0ZScsICAoKSAgICAgID0+IHRoaXMucmVmcmVzaCgpKSk7XG4gICAgICAgIHRoaXMucmVnaXN0ZXJFdmVudCh0aGlzLmFwcC52YXVsdC5vbignZGVsZXRlJywgIGYgICAgICAgPT4geyB0aGlzLm9uRGVsZXRlKGYucGF0aCk7IHRoaXMucmVmcmVzaCgpOyB9KSk7XG4gICAgICAgIHRoaXMucmVnaXN0ZXJFdmVudCh0aGlzLmFwcC52YXVsdC5vbigncmVuYW1lJywgIChmLCBvbGQpID0+IHsgdGhpcy5vblJlbmFtZShmLnBhdGgsIG9sZCk7IHRoaXMucmVmcmVzaCgpOyB9KSk7XG4gICAgICAgIHRoaXMucmVnaXN0ZXJFdmVudCh0aGlzLmFwcC53b3Jrc3BhY2Uub24oJ2ZpbGUtb3BlbicsICgpID0+IHRoaXMucmVmcmVzaCgpKSk7XG5cbiAgICAgICAgdGhpcy5hcHAud29ya3NwYWNlLm9uTGF5b3V0UmVhZHkoKCkgPT4gdGhpcy5hY3RpdmF0ZVZpZXcoKSk7XG4gICAgfVxuXG4gICAgb251bmxvYWQoKSB7fVxuXG4gICAgcHJpdmF0ZSBvbkRlbGV0ZShwYXRoOiBzdHJpbmcpIHtcbiAgICAgICAgY29uc3QgZ29uZSA9IChwOiBzdHJpbmcpID0+IHAgPT09IHBhdGggfHwgcC5zdGFydHNXaXRoKHBhdGggKyAnLycpO1xuICAgICAgICB0aGlzLmRhdGEucGlubmVkRm9sZGVycyAgID0gdGhpcy5kYXRhLnBpbm5lZEZvbGRlcnMuZmlsdGVyKHAgPT4gIWdvbmUocCkpO1xuICAgICAgICB0aGlzLmRhdGEuZXhwYW5kZWRGb2xkZXJzID0gdGhpcy5kYXRhLmV4cGFuZGVkRm9sZGVycy5maWx0ZXIocCA9PiAhZ29uZShwKSk7XG4gICAgICAgIGlmICh0aGlzLmRhdGEuYWN0aXZlRm9sZGVyUGF0aCAmJiBnb25lKHRoaXMuZGF0YS5hY3RpdmVGb2xkZXJQYXRoKSlcbiAgICAgICAgICAgIHRoaXMuZGF0YS5hY3RpdmVGb2xkZXJQYXRoID0gdGhpcy5kYXRhLnBpbm5lZEZvbGRlcnNbMF0gPz8gbnVsbDtcbiAgICAgICAgdGhpcy5zYXZlKCk7XG4gICAgfVxuXG4gICAgcHJpdmF0ZSBvblJlbmFtZShwYXRoOiBzdHJpbmcsIG9sZDogc3RyaW5nKSB7XG4gICAgICAgIGNvbnN0IHJlbWFwID0gKHA6IHN0cmluZykgPT5cbiAgICAgICAgICAgIHAgPT09IG9sZCA/IHBhdGggOiBwLnN0YXJ0c1dpdGgob2xkICsgJy8nKSA/IHBhdGggKyBwLnNsaWNlKG9sZC5sZW5ndGgpIDogcDtcbiAgICAgICAgdGhpcy5kYXRhLnBpbm5lZEZvbGRlcnMgICA9IHRoaXMuZGF0YS5waW5uZWRGb2xkZXJzLm1hcChyZW1hcCk7XG4gICAgICAgIHRoaXMuZGF0YS5leHBhbmRlZEZvbGRlcnMgPSB0aGlzLmRhdGEuZXhwYW5kZWRGb2xkZXJzLm1hcChyZW1hcCk7XG4gICAgICAgIGlmICh0aGlzLmRhdGEuYWN0aXZlRm9sZGVyUGF0aCkgdGhpcy5kYXRhLmFjdGl2ZUZvbGRlclBhdGggPSByZW1hcCh0aGlzLmRhdGEuYWN0aXZlRm9sZGVyUGF0aCk7XG4gICAgICAgIHRoaXMuc2F2ZSgpO1xuICAgIH1cblxuICAgIHByaXZhdGUgcmVmcmVzaCgpIHsgdGhpcy5nZXRWaWV3KCk/LnJlZnJlc2goKTsgfVxuXG4gICAgcHJpdmF0ZSBhc3luYyBhY3RpdmF0ZVZpZXcoKSB7XG4gICAgICAgIGlmICh0aGlzLmFwcC53b3Jrc3BhY2UuZ2V0TGVhdmVzT2ZUeXBlKFZJRVdfVFlQRSkubGVuZ3RoID4gMCkgcmV0dXJuO1xuICAgICAgICBhd2FpdCB0aGlzLmFwcC53b3Jrc3BhY2UuZ2V0TGVmdExlYWYoZmFsc2UpPy5zZXRWaWV3U3RhdGUoeyB0eXBlOiBWSUVXX1RZUEUsIGFjdGl2ZTogdHJ1ZSB9KTtcbiAgICB9XG5cbiAgICBwcml2YXRlIGdldFZpZXcoKTogRm9sZGVyUGluVmlldyB8IG51bGwge1xuICAgICAgICByZXR1cm4gKHRoaXMuYXBwLndvcmtzcGFjZS5nZXRMZWF2ZXNPZlR5cGUoVklFV19UWVBFKVswXT8udmlldyBhcyBGb2xkZXJQaW5WaWV3KSA/PyBudWxsO1xuICAgIH1cbn1cbiJdLAogICJtYXBwaW5ncyI6ICI7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7QUFBQTtBQUFBO0FBQUE7QUFBQTtBQUFBO0FBQUEsc0JBR087QUFFUCxJQUFNLFlBQVk7QUFTbEIsSUFBTSxlQUEyQixFQUFFLGVBQWUsQ0FBQyxHQUFHLGtCQUFrQixNQUFNLGlCQUFpQixDQUFDLEdBQUcsV0FBVyxNQUFNO0FBSXBILElBQU0sY0FBTixjQUEwQixzQkFBTTtBQUFBLEVBRzVCLFlBQ0ksS0FDUSxTQUNBLFNBQ0EsVUFDVjtBQUFFLFVBQU0sR0FBRztBQUhEO0FBQ0E7QUFDQTtBQUNJLFNBQUssUUFBUTtBQUFBLEVBQVM7QUFBQSxFQUV0QyxTQUFTO0FBQ0wsU0FBSyxRQUFRLFFBQVEsS0FBSyxPQUFPO0FBQ2pDLFFBQUksd0JBQVEsS0FBSyxTQUFTLEVBQUUsUUFBUSxPQUFLO0FBQ3JDLFFBQUUsU0FBUyxLQUFLLE9BQU8sRUFBRSxTQUFTLE9BQU0sS0FBSyxRQUFRLENBQUU7QUFDdkQsUUFBRSxRQUFRLE9BQU87QUFDakIsUUFBRSxRQUFRLE1BQU07QUFDaEIsUUFBRSxRQUFRLGlCQUFpQixXQUFXLE9BQUs7QUFDdkMsWUFBSSxFQUFFLFFBQVEsU0FBUztBQUFFLFlBQUUsZUFBZTtBQUFHLGVBQUssT0FBTztBQUFBLFFBQUc7QUFBQSxNQUNoRSxDQUFDO0FBQUEsSUFDTCxDQUFDO0FBQ0QsUUFBSSx3QkFBUSxLQUFLLFNBQVMsRUFDckIsVUFBVSxPQUFLLEVBQUUsY0FBYyxJQUFJ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QUssYUFBYSxDQUFDO0FBQUEsRUFDOUQ7QUFBQSxFQUVBLFdBQVc7QUFBQSxFQUFDO0FBQUEsRUFFSixTQUFTLE1BQWM7QUF0Vm5DO0FBdVZRLFVBQU0sT0FBTyxDQUFDLE1BQWMsTUFBTSxRQUFRLEVBQUUsV0FBVyxPQUFPLEdBQUc7QUFDakUsU0FBSyxLQUFLLGdCQUFrQixLQUFLLEtBQUssY0FBYyxPQUFPLE9BQUssQ0FBQyxLQUFLLENBQUMsQ0FBQztBQUN4RSxTQUFLLEtBQUssa0JBQWtCLEtBQUssS0FBSyxnQkFBZ0IsT0FBTyxPQUFLLENBQUMsS0FBSyxDQUFDLENBQUM7QUFDMUUsUUFBSSxLQUFLLEtBQUssb0JBQW9CLEtBQUssS0FBSyxLQUFLLGdCQUFnQjtBQUM3RCxXQUFLLEtBQUssb0JBQW1CLFVBQUssS0FBSyxjQUFjLENBQUMsTUFBekIsWUFBOEI7QUFDL0QsU0FBSyxLQUFLO0FBQUEsRUFDZDtBQUFBLEVBRVEsU0FBUyxNQUFjLEtBQWE7QUFDeEMsVUFBTSxRQUFRLENBQUMsTUFDWCxNQUFNLE1BQU0sT0FBTyxFQUFFLFdBQVcsTUFBTSxHQUFHLElBQUksT0FBTyxFQUFFLE1BQU0sSUFBSSxNQUFNLElBQUk7QUFDOUUsU0FBSyxLQUFLLGdCQUFrQixLQUFLLEtBQUssY0FBYyxJQUFJLEtBQUs7QUFDN0QsU0FBSyxLQUFLLGtCQUFrQixLQUFLLEtBQUssZ0JBQWdCLElBQUksS0FBSztBQUMvRCxRQUFJLEtBQUssS0FBSyxpQkFBa0IsTUFBSyxLQUFLLG1CQUFtQixNQUFNLEtBQUssS0FBSyxnQkFBZ0I7QUFDN0YsU0FBSyxLQUFLO0FBQUEsRUFDZDtBQUFBLEVBRVEsVUFBVTtBQXhXdEI7QUF3V3dCLGVBQUssUUFBUSxNQUFiLG1CQUFnQjtBQUFBLEVBQVc7QUFBQSxFQUUvQyxNQUFjLGVBQWU7QUExV2pDO0FBMldRLFFBQUksS0FBSyxJQUFJLFVBQVUsZ0JBQWdCLFNBQVMsRUFBRSxTQUFTLEVBQUc7QUFDOUQsWUFBTSxVQUFLLElBQUksVUFBVSxZQUFZLEtBQUssTUFBcEMsbUJBQXVDLGFBQWEsRUFBRSxNQUFNLFdBQVcsUUFBUSxLQUFLO0FBQUEsRUFDOUY7QUFBQSxFQUVRLFVBQWdDO0FBL1c1QztBQWdYUSxZQUFRLGdCQUFLLElBQUksVUFBVSxnQkFBZ0IsU0FBUyxFQUFFLENBQUMsTUFBL0MsbUJBQWtELFNBQWxELFlBQTRFO0FBQUEsRUFDeEY7QUFDSjsiLAogICJuYW1lcyI6IFtdCn0K
+var FolderPinSettings = class extends import_obsidian2.PluginSettingTab {
+  constructor(app, plugin) {
+    super(app, plugin);
+    this.plugin = plugin;
+  }
+  display() {
+    const { containerEl, plugin } = this;
+    containerEl.empty();
+    new import_obsidian2.Setting(containerEl).setName(plugin.t("language")).setDesc(plugin.t("languageDesc")).addDropdown((dropdown) => dropdown.addOptions({ auto: plugin.t("followApp"), zh: "\u7B80\u4F53\u4E2D\u6587", en: "English" }).setValue(plugin.data.language).onChange((value) => {
+      plugin.data.language = value === "zh" || value === "en" ? value : "auto";
+      plugin.refreshLanguage();
+      this.display();
+    }));
+    new import_obsidian2.Setting(containerEl).setName(plugin.t("autoReveal")).setDesc(plugin.t("autoRevealDesc")).addToggle((toggle) => toggle.setValue(plugin.data.autoReveal).onChange((value) => {
+      plugin.data.autoReveal = value;
+      plugin.persist();
+      plugin.views().forEach((view) => {
+        view.updateToolbar();
+        if (value) view.revealActive();
+      });
+    }));
+  }
+};
