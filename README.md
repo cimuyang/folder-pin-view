@@ -6,6 +6,8 @@ Obsidian 1.8.7+
 
 Pin frequently used folders as sidebar tabs and switch between them with one click. Includes draggable tabs, file management, keyboard navigation, Chinese and English, and light and dark theme support.
 
+![](https://github.com/cimuyang/folder-pin-view/blob/main/Promotion-2.2.1.png)
+
 ## 安装 / Installation
 
 从 [Releases](https://github.com/cimuyang/folder-pin-view/releases) 下载 `main.js`、`manifest.json`、`styles.css`，放入笔记库的 `.obsidian/plugins/folder-pin-view/`，然后在 Obsidian 的第三方插件设置中启用。更新时先停用插件，覆盖这三个文件后重新启用，**保留原有 `data.json`**。
