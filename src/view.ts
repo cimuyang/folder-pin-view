@@ -17,6 +17,8 @@ export class FolderPinView extends ItemView {
     private rows = new Map<string, HTMLElement>();
     private visible: TAbstractFile[] = [];
     private focusedPath: string | null = null;
+    private selectedPaths = new Set<string>();
+    private selectionAnchor: string | null = null;
     private renderedZone: string | null = null;
     private lastActive: string | null = null;
     private dragPath: string | null = null;
@@ -24,6 +26,8 @@ export class FolderPinView extends ItemView {
     private followButton!: HTMLButtonElement;
     private editor: EditorState | null = null;
     private creationId = 0;
+    private openingPath: string | null = null;
+    private deletingPaths = new Set<string>();
     private frame: number | undefined;
     private closed = false;
     private lastLanguage = '';
@@ -104,8 +108,8 @@ export class FolderPinView extends ItemView {
     }
     private buildToolbar(): void {
         this.toolbar.empty();
-        this.tool('square-pen', 'newNote', () => this.startCreate(false, this.rootPath()));
-        this.tool('folder-plus', 'newFolder', () => this.startCreate(true, this.rootPath()));
+        this.tool('square-pen', 'newNote', () => { void this.startCreate(false, this.rootPath()); });
+        this.tool('folder-plus', 'newFolder', () => { void this.startCreate(true, this.rootPath()); });
         const sort = this.tool('arrow-up-narrow-wide', 'sort', () => {
             const menu = new Menu();
             SORT_ORDERS.forEach((order, index) => {
@@ -245,6 +249,8 @@ export class FolderPinView extends ItemView {
         this.cancelEditor();
         this.data.activeFolderPath = path;
         this.focusedPath = null;
+        this.selectedPaths.clear();
+        this.selectionAnchor = null;
         this.plugin.persist();
         this.plugin.refreshViews();
     }
@@ -282,6 +288,9 @@ export class FolderPinView extends ItemView {
             }
         }
         if (!this.visible.length) this.tree.createDiv({ cls: 'fpv-empty', text: root ? this.t('empty') : this.t('missing') });
+        const visiblePaths = new Set(this.visible.map(file => file.path));
+        this.selectedPaths = new Set([...this.selectedPaths].filter(path => visiblePaths.has(path)));
+        if (this.selectionAnchor && !visiblePaths.has(this.selectionAnchor)) this.selectionAnchor = null;
         if (!this.data.pinnedFolders.length) this.tree.createDiv({ cls: 'fpv-empty fpv-hint', text: this.t('pinHint') });
         this.tree.scrollTop = getZone(this.data).scrollTop;
         if (!this.focusedPath || !this.rows.has(this.focusedPath)) {
@@ -290,6 +299,7 @@ export class FolderPinView extends ItemView {
                 : this.visible[Math.max(0, Math.min(previousIndex, this.visible.length - 1))]?.path ?? null;
         }
         this.updateHighlight();
+        this.updateSelection();
         this.updateTabStops();
         if (hadFocus) this.focusRow(this.focusedPath, false);
         this.updateToolbar();
@@ -310,14 +320,26 @@ export class FolderPinView extends ItemView {
         row.addEventListener('click', event => {
             if (this.editor) return;
             this.focusedPath = file.path;
+            if (event.shiftKey) {
+                this.selectRange(file.path, event.ctrlKey || event.metaKey);
+                row.focus({ preventScroll: true });
+                return;
+            }
+            if (event.ctrlKey || event.metaKey) {
+                this.toggleSelection(file.path);
+                row.focus({ preventScroll: true });
+                return;
+            }
+            this.selectOnly(file.path);
             if (folder) { row.focus({ preventScroll: true }); this.toggleFolder(file.path); }
-            else if (file instanceof TFile) void this.openFile(file, event.ctrlKey || event.metaKey);
+            else if (file instanceof TFile) void this.openFile(file);
         });
         row.addEventListener('auxclick', event => {
             if (event.button === 1 && file instanceof TFile) { event.preventDefault(); void this.openFile(file, true); }
         });
         row.addEventListener('contextmenu', event => {
             event.preventDefault(); event.stopPropagation();
+            if (!this.selectedPaths.has(file.path)) this.selectOnly(file.path);
             this.focusedPath = file.path;
             row.focus({ preventScroll: true });
             this.fileMenu(file).showAtMouseEvent(event);
@@ -351,7 +373,7 @@ export class FolderPinView extends ItemView {
         const current = this.app.workspace.getActiveFile()?.path ?? null;
         this.updateHighlight();
         if (!current || current === this.lastActive) return;
-        this.creationId++;
+        if (current !== this.openingPath) this.creationId++;
         this.lastActive = current;
         if (this.data.autoReveal && !this.editor) this.revealActive();
     }
@@ -382,7 +404,6 @@ export class FolderPinView extends ItemView {
         const path = this.app.workspace.getActiveFile()?.path;
         this.rows.forEach((row, rowPath) => {
             row.toggleClass('is-active', rowPath === path);
-            row.setAttribute('aria-selected', String(rowPath === path));
         });
     }
     private updateTabStops(): void {
@@ -402,6 +423,33 @@ export class FolderPinView extends ItemView {
         const row = path ? this.rows.get(path) : null;
         (row ?? this.tree).focus({ preventScroll: true });
         if (row && reveal) this.revealRow(row);
+    }
+    private updateSelection(): void {
+        this.rows.forEach((row, path) => {
+            const selected = this.selectedPaths.has(path);
+            row.toggleClass('is-selected', selected);
+            row.setAttribute('aria-selected', String(selected));
+        });
+    }
+    private selectOnly(path: string): void {
+        this.selectedPaths = new Set([path]);
+        this.selectionAnchor = path;
+        this.updateSelection();
+    }
+    private toggleSelection(path: string): void {
+        if (this.selectedPaths.has(path)) this.selectedPaths.delete(path);
+        else this.selectedPaths.add(path);
+        this.selectionAnchor = path;
+        this.updateSelection();
+    }
+    private selectRange(path: string, add = false): void {
+        const end = this.visible.findIndex(file => file.path === path);
+        const start = this.visible.findIndex(file => file.path === this.selectionAnchor);
+        if (start < 0 || end < 0) { this.selectOnly(path); return; }
+        const selected = add ? new Set(this.selectedPaths) : new Set<string>();
+        for (let index = Math.min(start, end); index <= Math.max(start, end); index++) selected.add(this.visible[index].path);
+        this.selectedPaths = selected;
+        this.updateSelection();
     }
     private onTreeKey(event: KeyboardEvent): void {
         if (this.editor || event.isComposing) return;
@@ -434,10 +482,15 @@ export class FolderPinView extends ItemView {
             default: return;
         }
         event.preventDefault();
-        if (target) this.focusRow(target.path);
+        if (target) {
+            if (event.shiftKey) this.selectRange(target.path, event.ctrlKey || event.metaKey);
+            else this.selectOnly(target.path);
+            this.focusRow(target.path);
+        }
     }
     private showKeyboardMenu(file: TAbstractFile): void {
         const rect = this.rows.get(file.path)?.getBoundingClientRect();
+        if (!this.selectedPaths.has(file.path)) this.selectOnly(file.path);
         if (rect) this.fileMenu(file).showAtPosition({ x: rect.left + 24, y: rect.bottom });
     }
     private async openFile(file: TFile, newTab = false): Promise<void> {
@@ -445,11 +498,18 @@ export class FolderPinView extends ItemView {
         catch (error) { this.reportError(error); }
     }
     private creationMenu(menu: Menu, parent: string): Menu {
-        return menu.addItem(item => item.setTitle(this.t('newNote')).setIcon('square-pen').onClick(() => this.startCreate(false, parent)))
-            .addItem(item => item.setTitle(this.t('newFolder')).setIcon('folder-plus').onClick(() => this.startCreate(true, parent)));
+        return menu.addItem(item => item.setTitle(this.t('newNote')).setIcon('square-pen').onClick(() => { void this.startCreate(false, parent); }))
+            .addItem(item => item.setTitle(this.t('newFolder')).setIcon('folder-plus').onClick(() => { void this.startCreate(true, parent); }));
     }
     private fileMenu(file: TAbstractFile): Menu {
         const menu = new Menu();
+        const selected = this.selectedPaths.size > 1 && this.selectedPaths.has(file.path);
+        if (selected) {
+            menu.addItem(item => item.setTitle(this.t('deleteSelected') + ` (${this.selectedPaths.size})`).setIcon('trash-2').setWarning(true)
+                .onClick(() => { void this.deleteSelected(); }));
+            this.app.workspace.trigger('file-menu', menu, file, VIEW_TYPE, this.leaf);
+            return menu;
+        }
         if (file instanceof TFolder) {
             this.creationMenu(menu, file.path);
             const pinned = this.data.pinnedFolders.includes(file.path);
@@ -465,10 +525,22 @@ export class FolderPinView extends ItemView {
         return menu;
     }
     private async deleteFile(file: TAbstractFile): Promise<void> {
+        if (this.deletingPaths.has(file.path)) return;
+        this.deletingPaths.add(file.path);
         try {
             if (this.app.vault.getAbstractFileByPath(file.path) !== file) throw new Error(this.t('missing'));
-            if (await this.app.fileManager.promptForDeletion(file)) await this.app.fileManager.trashFile(file);
+            await this.app.fileManager.promptForDeletion(file);
         } catch (error) { this.reportError(error); }
+        finally { this.deletingPaths.delete(file.path); }
+    }
+    private async deleteSelected(): Promise<void> {
+        const paths = [...this.selectedPaths];
+        for (const path of paths) {
+            // Deleting a selected folder also removes selected descendants.
+            if (paths.some(other => other !== path && containsPath(other, path))) continue;
+            const file = this.app.vault.getAbstractFileByPath(path);
+            if (file) await this.deleteFile(file);
+        }
     }
     private reportError(error: unknown): void {
         new Notice(this.t('operationFailed') + ': ' + (error instanceof Error ? error.message : String(error)));
@@ -495,10 +567,19 @@ export class FolderPinView extends ItemView {
             if (row) this.revealRow(row);
             this.plugin.persist();
             if (created instanceof TFile) {
-                // Let the native file view own title selection, Enter, Escape and focus.
-                await this.app.workspace.getLeaf(false).openFile(created, {
-                    active: true, state: { mode: 'source' }, eState: { rename: 'all' },
-                });
+                const leaf = this.app.workspace.getLeaf(false);
+                this.openingPath = created.path;
+                try {
+                    await leaf.openFile(created, {
+                        active: true, state: { mode: 'source' }, eState: { rename: 'all' },
+                    });
+                    if (id === this.creationId && this.app.workspace.getActiveFile() === created) {
+                        // The view may focus the body while finishing the open transition.
+                        leaf.setEphemeralState({ rename: 'all' });
+                    }
+                } finally {
+                    this.openingPath = null;
+                }
             } else this.startRename(created);
         } catch (error) {
             this.reportError(error);
@@ -517,7 +598,6 @@ export class FolderPinView extends ItemView {
         row.hidden = true;
         const initial = file instanceof TFile && file.extension ? file.basename : file.name;
         this.beginEditor(host, initial, async value => {
-            if (this.app.vault.getAbstractFileByPath(file.path) !== file) throw new Error(this.t('missing'));
             if (this.app.vault.getAbstractFileByPath(file.path) !== file) throw new Error(this.t('missing'));
             const path = entryPath(file.parent?.path ?? '', value, file instanceof TFile ? file.extension : '');
             if (path === file.path) return;
@@ -561,12 +641,15 @@ export class FolderPinView extends ItemView {
         this.editor = editor;
         input.addEventListener('keydown', event => {
             event.stopPropagation();
-            if (event.isComposing || event.keyCode === 229) return;
+            if (event.isComposing || composing) return;
             if (event.key === 'Enter') { event.preventDefault(); void editor.commit(); }
             else if (event.key === 'Escape' && !editor.busy) {
                 event.preventDefault(); this.cancelEditor(); this.renderTree(); this.focusRow(this.focusedPath, false);
             }
         });
+        let composing = false;
+        input.addEventListener('compositionstart', () => { composing = true; });
+        input.addEventListener('compositionend', () => { composing = false; });
         // Leaving the editor cancels only the rename; the existing item is retained.
         input.addEventListener('input', () => { input.removeAttribute('aria-invalid'); error.setText(this.t('editHint')); });
         input.focus({ preventScroll: true });

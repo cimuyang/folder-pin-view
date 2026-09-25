@@ -103,7 +103,8 @@ export function comparator(order: SortOrder, locale: string): (a: SortEntry, b: 
 }
 
 export function validName(name: string): boolean {
-    return !!name && name === name.trim() && !/[<>:"/\\|?*\u0000-\u001f]/.test(name)
+    return !!name && name === name.trim() && !/[<>:"/\\|?*]/.test(name)
+        && ![...name].some(character => character.charCodeAt(0) < 32)
         && !/[. ]$/.test(name) && name !== '.' && name !== '..'
         && !/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(name);
 }

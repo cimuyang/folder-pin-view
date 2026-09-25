@@ -87,7 +87,12 @@ export class Plugin {
     addCommand(_command: any) {}
     addSettingTab(tab: any) { this.settings.push(tab); }
 }
-export class PluginSettingTab { containerEl = document.createElement('div'); constructor(public app: any, public plugin: any) {} }
+export class PluginSettingTab {
+    containerEl = document.createElement('div');
+    updates = 0;
+    constructor(public app: any, public plugin: any) {}
+    update() { this.updates++; }
+}
 export class Setting {
     constructor(_el: HTMLElement) {}
     setName(_name: string) { return this; } setDesc(_desc: string) { return this; }
@@ -145,17 +150,23 @@ export function createApp() {
     }
     const workspace = Object.assign(new Events(), {
         factories: new Map<string, any>(), leaves: [] as any[], active: null as TFile | null,
-        opened: [] as { file: TFile; mode: any; options: any }[], layoutCallback: () => {},
+        opened: [] as { file: TFile; mode: any; options: any }[],
+        titleFocus: [] as any[], layoutCallback: () => {},
         getActiveFile: () => workspace.active,
         getLeavesOfType: (type: string) => workspace.leaves.filter(leaf => leaf.type === type),
         onLayoutReady: (cb: () => void) => { workspace.layoutCallback = cb; },
         revealLeaf: async (_leaf: any) => {},
-        getLeaf: (mode: any) => ({ openFile: async (file: TFile, options?: any) => {
+        getLeaf: (mode: any) => ({ setEphemeralState: (state: any) => {
+            workspace.titleFocus.push(state);
+            document.querySelector<HTMLElement>('.mock-note-title')?.focus();
+        }, openFile: async (file: TFile, options?: any) => {
             workspace.active = file; workspace.opened.push({ file, mode, options });
             // Model focus transfer only, not Obsidian's private title editor behavior.
             let editor = document.querySelector<HTMLTextAreaElement>('.mock-note-editor');
             if (!editor) { editor = document.createElement('textarea'); editor.className = 'mock-note-editor'; document.body.append(editor); }
             editor.focus();
+            let title = document.querySelector<HTMLElement>('.mock-note-title');
+            if (!title) { title = document.createElement('input'); title.className = 'mock-note-title'; document.body.append(title); }
             workspace.trigger('file-open', file);
         } }),
         getLeftLeaf: (_split: boolean) => {
@@ -167,7 +178,11 @@ export function createApp() {
     });
     const manager = {
         allowDelete: true, renamed: [] as string[], trashed: [] as string[],
-        promptForDeletion: async (_file: TAbstractFile) => manager.allowDelete,
+        promptForDeletion: async (file: TAbstractFile) => {
+            if (!manager.allowDelete) return false;
+            await manager.trashFile(file);
+            return true;
+        },
         trashFile: async (file: TAbstractFile) => {
             manager.trashed.push(file.path);
             for (const [path] of files) if (path === file.path || path.startsWith(file.path + '/')) files.delete(path);

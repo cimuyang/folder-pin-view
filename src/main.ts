@@ -1,12 +1,13 @@
 import { App, getLanguage, Notice, Plugin, PluginSettingTab, Setting, TFile, TFolder } from 'obsidian';
+import type { SettingDefinitionItem } from 'obsidian';
 import { normalizeData, PluginData, remapData, removePath, zoneKey } from './model';
 import { resolveLanguage, TextKey, translate } from './i18n';
 import { FolderPinView, VIEW_TYPE } from './view';
 
 export default class FolderPinPlugin extends Plugin {
     data: PluginData = normalizeData(null);
-    private saveTimer: ReturnType<typeof setTimeout> | undefined;
-    private refreshTimer: ReturnType<typeof setTimeout> | undefined;
+    private saveTimer: number | undefined;
+    private refreshTimer: number | undefined;
     private writeQueue: Promise<void> = Promise.resolve();
     private stopping = false;
     private ribbon: HTMLElement | undefined;
@@ -97,20 +98,20 @@ export default class FolderPinPlugin extends Plugin {
         this.persist();
     }
     private scheduleRefresh(): void {
-        if (this.refreshTimer) clearTimeout(this.refreshTimer);
-        this.refreshTimer = setTimeout(() => {
+        if (this.refreshTimer !== undefined) window.clearTimeout(this.refreshTimer);
+        this.refreshTimer = window.setTimeout(() => {
             this.refreshTimer = undefined;
             if (!this.stopping) this.views().forEach(view => view.renderTree());
         }, 100);
     }
     persist = (): void => {
         if (this.stopping) return;
-        if (this.saveTimer) clearTimeout(this.saveTimer);
-        this.saveTimer = setTimeout(() => { this.saveTimer = undefined; this.flushSave(); }, 200);
+        if (this.saveTimer !== undefined) window.clearTimeout(this.saveTimer);
+        this.saveTimer = window.setTimeout(() => { this.saveTimer = undefined; this.flushSave(); }, 200);
     };
     // Serialize snapshots so a slow previous write cannot overwrite newer settings.
     flushSave(): void {
-        if (this.saveTimer) { clearTimeout(this.saveTimer); this.saveTimer = undefined; }
+        if (this.saveTimer !== undefined) { window.clearTimeout(this.saveTimer); this.saveTimer = undefined; }
         const snapshot = JSON.parse(JSON.stringify(this.data)) as PluginData;
         this.writeQueue = this.writeQueue.then(() => this.saveData(snapshot)).catch(error => {
             console.error('[folder-pin-view] Settings save failed', error);
@@ -119,7 +120,7 @@ export default class FolderPinPlugin extends Plugin {
     }
     onunload(): void {
         this.stopping = true;
-        if (this.refreshTimer) clearTimeout(this.refreshTimer);
+        if (this.refreshTimer !== undefined) window.clearTimeout(this.refreshTimer);
         this.views().forEach(view => view.captureScroll());
         this.flushSave();
     }
@@ -127,6 +128,37 @@ export default class FolderPinPlugin extends Plugin {
 
 class FolderPinSettings extends PluginSettingTab {
     constructor(app: App, private plugin: FolderPinPlugin) { super(app, plugin); }
+    // Obsidian 1.13+ indexes these definitions for settings search.
+    getSettingDefinitions(): SettingDefinitionItem[] {
+        return [
+            { name: this.plugin.t('language'), desc: this.plugin.t('languageDesc'),
+                control: { type: 'dropdown', key: 'language', options: {
+                    auto: this.plugin.t('followApp'), zh: '简体中文', en: 'English',
+                } } },
+            { name: this.plugin.t('autoReveal'), desc: this.plugin.t('autoRevealDesc'),
+                control: { type: 'toggle', key: 'autoReveal' } },
+        ];
+    }
+    getControlValue(key: string): unknown {
+        if (key === 'language') return this.plugin.data.language;
+        if (key === 'autoReveal') return this.plugin.data.autoReveal;
+        return undefined;
+    }
+    setControlValue(key: string, value: unknown): void {
+        if (key === 'language') {
+            this.plugin.data.language = value === 'zh' || value === 'en' ? value : 'auto';
+            this.plugin.refreshLanguage();
+            this.update();
+        } else if (key === 'autoReveal') {
+            this.plugin.data.autoReveal = value === true;
+            this.plugin.persist();
+            this.plugin.views().forEach(view => {
+                view.updateToolbar();
+                if (this.plugin.data.autoReveal) view.revealActive();
+            });
+        }
+    }
+    // Obsidian < 1.13 still calls display().
     display(): void {
         const { containerEl, plugin } = this;
         containerEl.empty();

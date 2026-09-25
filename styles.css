@@ -107,6 +107,7 @@
 }
 .fpv-root .fpv-row:hover { background: var(--nav-item-background-hover, var(--background-modifier-hover)); color: var(--nav-item-color-hover, var(--text-normal)); }
 .fpv-root .fpv-row.is-active { background: var(--nav-item-background-active, var(--background-modifier-hover)); color: var(--nav-item-color-active, var(--text-normal)); }
+.fpv-root .fpv-row.is-selected { background: var(--nav-item-background-selected, var(--background-modifier-hover)); color: var(--nav-item-color-selected, var(--text-normal)); }
 .fpv-root .fpv-arrow { display: flex; flex: 0 0 14px; width: 14px; color: var(--nav-collapse-icon-color, var(--text-faint)); }
 .fpv-root .fpv-arrow svg { width: 14px; height: 14px; stroke-width: 2px; }
 .fpv-root .fpv-row[aria-expanded="true"] > .fpv-arrow { transform: rotate(90deg); }
@@ -121,7 +122,7 @@
 .fpv-root .fpv-input-message { padding: 4px 0 0; color: var(--text-muted); font-size: var(--font-ui-smaller, 12px); line-height: 1.4; overflow-wrap: anywhere; }
 .fpv-root .fpv-input[aria-invalid="true"] { border-color: var(--text-error); }
 .fpv-root .fpv-input[aria-invalid="true"] + .fpv-input-message { color: var(--text-error); }
-.fpv-root [hidden] { display: none !important; }
+.fpv-root .fpv-row[hidden], .fpv-root .fpv-empty[hidden] { display: none; }
 @media (pointer: coarse) {
     .fpv-root button.fpv-tool { width: 36px; height: 36px; }
     .fpv-root button.fpv-pin { height: 32px; }

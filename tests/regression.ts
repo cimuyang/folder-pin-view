@@ -310,6 +310,8 @@ test('new notes open immediately with native title rename state and retain edito
         assert.ok(h.files.has('A/未命名.md'));
         assert.equal(h.app.workspace.opened.length, 1); assert.equal(h.el.querySelector('.fpv-input'), null);
         assert.deepEqual(h.app.workspace.opened[0].options, { active: true, state: { mode: 'source' }, eState: { rename: 'all' } });
+        assert.deepEqual(h.app.workspace.titleFocus, [{ rename: 'all' }]);
+        assert.equal(h.dom.window.document.activeElement?.className, 'mock-note-title');
         assert.ok(h.row('A/未命名.md').classList.contains('is-active'));
         const focus = h.dom.window.document.activeElement;
         h.view.renderTree(); assert.equal(h.dom.window.document.activeElement, focus);
@@ -358,6 +360,92 @@ test('delete respects native confirmation cancellation and native trash API', as
         assert.ok(h.files.has('A/one.md')); assert.equal(h.app.fileManager.trashed.length, 0);
         h.app.fileManager.allowDelete = true; openMenu(); Menu.last!.items.find(item => item.title === '删除')!.action(); await settle();
         assert.deepEqual(h.app.fileManager.trashed, ['A/one.md']); assert.equal(h.row('A/one.md'), undefined);
+    } finally { await h.close(); }
+});
+
+test('Shift selects the visible range without opening notes; plain click resets selection', async () => {
+    const h = await harness();
+    try {
+        h.row('A/one.md').click(); await settle();
+        const opened = h.app.workspace.opened.length;
+        h.row('A/two.md').dispatchEvent(new h.dom.window.MouseEvent('click', { bubbles: true, shiftKey: true }));
+        assert.equal(h.app.workspace.opened.length, opened);
+        assert.ok(h.row('A/one.md').classList.contains('is-selected'));
+        assert.ok(h.row('A/two.md').classList.contains('is-selected'));
+        h.row('A/Sub').click();
+        assert.equal(h.row('A/one.md').getAttribute('aria-selected'), 'false');
+    } finally { await h.close(); }
+});
+
+test('Ctrl toggles selection and context menu deletes selected files once each', async () => {
+    const h = await harness();
+    try {
+        h.row('A/one.md').click(); await settle();
+        h.row('A/two.md').dispatchEvent(new h.dom.window.MouseEvent('click', { bubbles: true, ctrlKey: true }));
+        assert.equal(h.app.workspace.opened.length, 1);
+        h.row('A/two.md').dispatchEvent(new h.dom.window.MouseEvent('contextmenu', { bubbles: true }));
+        assert.match(Menu.last!.items[0].title, /删除所选项目 \(2\)/);
+        Menu.last!.items[0].action(); await settle();
+        assert.deepEqual(h.app.fileManager.trashed, ['A/one.md', 'A/two.md']);
+        assert.equal(Notice.messages.length, 0);
+    } finally { await h.close(); }
+});
+
+test('selected folder and descendant are deleted once; cancel keeps both', async () => {
+    const h = await harness();
+    try {
+        h.row('A/Sub').click();
+        h.row('A/Sub/deep.md').dispatchEvent(new h.dom.window.MouseEvent('click', { bubbles: true, ctrlKey: true }));
+        h.app.fileManager.allowDelete = false;
+        h.row('A/Sub').dispatchEvent(new h.dom.window.MouseEvent('contextmenu', { bubbles: true }));
+        Menu.last!.items[0].action(); await settle();
+        assert.ok(h.files.has('A/Sub/deep.md')); assert.equal(h.app.fileManager.trashed.length, 0);
+        h.app.fileManager.allowDelete = true;
+        h.row('A/Sub').dispatchEvent(new h.dom.window.MouseEvent('contextmenu', { bubbles: true }));
+        Menu.last!.items[0].action(); await settle();
+        assert.deepEqual(h.app.fileManager.trashed, ['A/Sub']);
+        assert.equal(Notice.messages.length, 0);
+    } finally { await h.close(); }
+});
+
+test('settings definitions search both options and preserve their side effects', async () => {
+    const h = await harness();
+    try {
+        const settings = h.plugin.settings[0] as any;
+        assert.deepEqual(settings.getSettingDefinitions().map((item: any) => item.name), ['界面语言', '自动显示当前文件']);
+        settings.setControlValue('language', 'en');
+        assert.equal(settings.getControlValue('language'), 'en');
+        assert.equal(settings.updates, 1);
+        assert.equal(h.tool(0).getAttribute('aria-label'), 'New note');
+        settings.setControlValue('autoReveal', true);
+        assert.equal(settings.getControlValue('autoReveal'), true);
+        assert.equal(h.tool(3).getAttribute('aria-pressed'), 'true');
+    } finally { await h.close(); }
+});
+
+test('folder rename ignores composition Enter and commits on the next deliberate Enter', async () => {
+    const h = await harness();
+    try {
+        h.tool(1).click(); await settle();
+        const input = h.el.querySelector<HTMLInputElement>('.fpv-input')!;
+        input.value = '中文';
+        input.dispatchEvent(new h.dom.window.CompositionEvent('compositionstart', { bubbles: true }));
+        h.key(input, 'Enter'); await settle();
+        assert.ok(h.files.has('A/未命名文件夹'));
+        input.dispatchEvent(new h.dom.window.CompositionEvent('compositionend', { bubbles: true }));
+        h.key(input, 'Enter'); await settle();
+        assert.ok(h.files.has('A/中文'));
+    } finally { await h.close(); }
+});
+
+test('Shift plus arrow keys extends selection and changing regions clears it', async () => {
+    const h = await harness();
+    try {
+        h.row('A/one.md').click(); await settle();
+        h.key(h.row('A/one.md'), 'ArrowDown', { shiftKey: true });
+        assert.equal(h.el.querySelectorAll('.fpv-row.is-selected').length, 2);
+        h.pin('B').click(); h.pin('A').click();
+        assert.equal(h.el.querySelectorAll('.fpv-row.is-selected').length, 0);
     } finally { await h.close(); }
 });
 test('keyboard navigation opens folders, moves focus and opens files in a new tab', async () => {

@@ -3,7 +3,7 @@ import type { Language, SortOrder } from './model';
 const en = {
     title: 'Folder Pin View', newNote: 'New note', newFolder: 'New folder',
     sort: 'Change sort order', autoReveal: 'Auto-reveal active file', expand: 'Expand all', collapse: 'Collapse all',
-    pin: 'Pin folder', unpin: 'Unpin folder', rename: 'Rename', delete: 'Delete',
+    pin: 'Pin folder', unpin: 'Unpin folder', rename: 'Rename', delete: 'Delete', deleteSelected: 'Delete selected',
     openTab: 'Open in new tab', empty: 'This folder is empty',
     pinHint: 'Right-click a folder in the file explorer to pin it here.',
     untitled: 'Untitled', untitledFolder: 'Untitled folder',
@@ -23,7 +23,7 @@ export type TextKey = keyof typeof en;
 const zh: Record<TextKey, string> = {
     title: '文件区', newNote: '新建笔记', newFolder: '新建文件夹',
     sort: '更改排序方式', autoReveal: '自动显示当前文件', expand: '全部展开', collapse: '全部折叠',
-    pin: '固定文件夹', unpin: '取消固定', rename: '重命名', delete: '删除',
+    pin: '固定文件夹', unpin: '取消固定', rename: '重命名', delete: '删除', deleteSelected: '删除所选项目',
     openTab: '在新标签页中打开', empty: '此文件夹为空',
     pinHint: '在文件列表中右键文件夹，即可将它固定到这里。',
     untitled: '未命名', untitledFolder: '未命名文件夹',
