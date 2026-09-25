@@ -1,10 +1,12 @@
 # Folder Pin View
 
-**2.2.2 · Obsidian 1.8.7+ · [MIT](LICENSE)**
+Obsidian 1.8.7+ 
 
 将常用文件夹固定为侧栏标签，一键切换，专注当前文件区。支持拖拽排序、文件管理、键盘导航与中英双语，适配深浅主题。
 
 Pin frequently used folders as sidebar tabs and switch between them with one click. Includes draggable tabs, file management, keyboard navigation, Chinese and English, and light and dark theme support.
+
+![](https://github.com/cimuyang/folder-pin-view/blob/main/Promotion-2.2.1.png)
 
 ## 安装 / Installation
 
@@ -41,16 +43,20 @@ npm run build
 
 The plugin makes no network requests and collects no telemetry. File operations stay within the current vault, and plugin settings are stored locally in `data.json`.
 
-## 2.2.2 更新说明 / What's new in 2.2.2
+## 更新说明 / What's new
 
-**新建与命名：**新笔记立即打开，在 Obsidian 原生标题处命名；新文件夹立即创建并在侧栏命名，Esc 或切换文件区仅取消改名。新建后自动展开父目录并定位，连续创建自动避让重名；写入失败可重试，打开失败保留文件，异步创建完成后不会抢回已切换的焦点。
+### 2.2.2
 
-**Creation and naming:** New notes open immediately with Obsidian's native title editing. New folders appear immediately for sidebar renaming; Escape or switching regions cancels only the rename. Creation reveals the new item, avoids duplicate names during concurrent writes, supports retrying failed writes, retains files if opening fails, and avoids taking focus back after you move on.
+**新建与命名**新笔记立即打开，在 Obsidian 原生标题处命名；新文件夹立即创建并在侧栏命名，Esc 或切换文件区仅取消改名。新建后自动展开父目录并定位，连续创建自动避让重名；写入失败可重试，打开失败保留文件，异步创建完成后不会抢回已切换的焦点。
 
-**浏览与排序：**统一新建、排序、自动定位和折叠/展开工具栏；支持文件名、修改时间、创建时间的正反序排序。各文件区独立记忆展开与滚动位置，兼容旧配置；自动定位可切换到对应置顶文件区，区外笔记不打断浏览。
+**Creation and naming** New notes open immediately with Obsidian's native title editing. New folders appear immediately for sidebar renaming; Escape or switching regions cancels only the rename. Creation reveals the new item, avoids duplicate names during concurrent writes, supports retrying failed writes, retains files if opening fails, and avoids taking focus back after you move on.
 
-**Navigation and sorting:** A unified toolbar provides creation, sorting, auto-reveal, and collapse/expand controls. Sort by name, modification time, or creation time in either direction. Each region remembers its expansion and scroll state, with legacy settings migration. Auto-reveal can switch to the matching pinned region without reacting to notes outside pinned folders.
+### 2.2.1
 
-**交互与修复：**改善标签可见性、滚动稳定性、长文件名显示及中英文菜单提示。侧栏重命名支持 Enter 保存、Esc 取消，避免输入法误提交和重复扩展名；重命名与删除遵循 Obsidian 的链接更新、删除确认及回收站设置。
+**浏览与排序**统一新建、排序、自动定位和折叠/展开工具栏；支持文件名、修改时间、创建时间的正反序排序。各文件区独立记忆展开与滚动位置，兼容旧配置；自动定位可切换到对应置顶文件区，区外笔记不打断浏览。
 
-**Polish and fixes:** Improved tab visibility, scroll stability, long file names, and bilingual menus and tooltips. Sidebar renaming supports Enter to save and Escape to cancel, with IME safeguards and extension handling. Renaming and deletion follow Obsidian's link updates, confirmation prompts, and trash preferences.
+**Navigation and sorting** A unified toolbar provides creation, sorting, auto-reveal, and collapse/expand controls. Sort by name, modification time, or creation time in either direction. Each region remembers its expansion and scroll state, with legacy settings migration. Auto-reveal can switch to the matching pinned region without reacting to notes outside pinned folders.
+
+**交互与修复**改善标签可见性、滚动稳定性、长文件名显示及中英文菜单提示。侧栏重命名支持 Enter 保存、Esc 取消，避免输入法误提交和重复扩展名；重命名与删除遵循 Obsidian 的链接更新、删除确认及回收站设置。
+
+**Polish and fixes** Improved tab visibility, scroll stability, long file names, and bilingual menus and tooltips. Sidebar renaming supports Enter to save and Escape to cancel, with IME safeguards and extension handling. Renaming and deletion follow Obsidian's link updates, confirmation prompts, and trash preferences.
