@@ -3,6 +3,7 @@ import type FolderPinPlugin from './main';
 import { ancestorPaths, comparator, containsPath, entryPath, getZone, revealScroll, revealZone, SORT_ORDERS, validName, zoneKey } from './model';
 import type { TextKey } from './i18n';
 import { createUntitled } from './create';
+import { planMove } from './move';
 
 export const VIEW_TYPE = 'folder-pin-view';
 let nextLabelId = 0;
@@ -22,6 +23,7 @@ export class FolderPinView extends ItemView {
     private renderedZone: string | null = null;
     private lastActive: string | null = null;
     private dragPath: string | null = null;
+    private fileDrag: string[] | null = null;
     private collapseButton!: HTMLButtonElement;
     private followButton!: HTMLButtonElement;
     private editor: EditorState | null = null;
@@ -77,6 +79,7 @@ export class FolderPinView extends ItemView {
         this.creationId++;
         this.captureScroll();
         this.closed = true;
+        this.clearFileDrag();
         if (this.frame !== undefined) this.contentEl.win.cancelAnimationFrame(this.frame);
         this.cancelEditor();
         this.plugin.flushSave();
@@ -179,6 +182,7 @@ export class FolderPinView extends ItemView {
                     this.activePin()?.focus({ preventScroll: true });
                 });
                 button.addEventListener('dragstart', event => {
+                    this.clearFileDrag();
                     this.dragPath = path;
                     button.addClass('is-dragging');
                     event.dataTransfer?.setData('text/plain', path);
@@ -189,12 +193,14 @@ export class FolderPinView extends ItemView {
                     this.pinBar.querySelectorAll('.is-dragging, .drag-over').forEach(el => el.classList.remove('is-dragging', 'drag-over'));
                 });
                 button.addEventListener('dragover', event => {
+                    if (this.fileDrag) return;
                     if (!this.dragPath || this.dragPath === path) return;
                     event.preventDefault();
                     button.addClass('drag-over');
                 });
                 button.addEventListener('dragleave', () => button.removeClass('drag-over'));
                 button.addEventListener('drop', event => {
+                    if (this.fileDrag) return;
                     event.preventDefault();
                     const from = this.data.pinnedFolders.indexOf(this.dragPath ?? '');
                     const to = this.data.pinnedFolders.indexOf(path);
@@ -206,6 +212,7 @@ export class FolderPinView extends ItemView {
                     this.plugin.persist();
                     this.plugin.views().forEach(view => view.renderPins());
                 });
+                this.attachMoveTarget(button, () => this.app.vault.getAbstractFileByPath(path));
             });
             this.pinBar.scrollLeft = scroll;
             this.updatePinSelection();
@@ -307,7 +314,7 @@ export class FolderPinView extends ItemView {
     private drawRow(file: TAbstractFile, depth: number, index: number, count: number, expanded: boolean): void {
         const folder = file instanceof TFolder;
         const row = this.tree.createDiv({ cls: 'tree-item-self fpv-row' + (folder ? ' fpv-folder' : ' fpv-file'),
-            attr: { role: 'treeitem', tabindex: '-1', 'data-path': file.path, 'aria-level': String(depth + 1),
+            attr: { role: 'treeitem', tabindex: '-1', draggable: 'true', 'data-path': file.path, 'aria-level': String(depth + 1),
                 'aria-posinset': String(index + 1), 'aria-setsize': String(count) } });
         row.style.setProperty('--fpv-depth', String(depth));
         const arrow = row.createSpan({ cls: 'fpv-arrow', attr: { 'aria-hidden': 'true' } });
@@ -316,6 +323,16 @@ export class FolderPinView extends ItemView {
         setTooltip(row, file.path);
         this.rows.set(file.path, row);
         this.visible.push(file);
+        row.addEventListener('dragstart', event => {
+            if (this.editor || !event.dataTransfer) { event.preventDefault(); return; }
+            this.dragPath = null;
+            this.fileDrag = this.selectedPaths.has(file.path) ? [...this.selectedPaths] : [file.path];
+            event.dataTransfer.setData('application/x-folder-pin-view', file.path);
+            event.dataTransfer.effectAllowed = 'move';
+            this.fileDrag.forEach(path => this.rows.get(path)?.addClass('is-dragging'));
+        });
+        row.addEventListener('dragend', () => this.clearFileDrag());
+        if (folder) this.attachMoveTarget(row, () => this.app.vault.getAbstractFileByPath(file.path));
         row.addEventListener('focus', () => { this.focusedPath = file.path; this.updateTabStops(); });
         row.addEventListener('click', event => {
             if (this.editor) return;
@@ -344,6 +361,69 @@ export class FolderPinView extends ItemView {
             row.focus({ preventScroll: true });
             this.fileMenu(file).showAtMouseEvent(event);
         });
+    }
+    private clearFileDrag(): void {
+        this.fileDrag = null;
+        this.contentEl.querySelectorAll('.fpv-drop-target, .fpv-drop-invalid, .fpv-row.is-dragging')
+            .forEach(el => el.classList.remove('fpv-drop-target', 'fpv-drop-invalid', 'is-dragging'));
+    }
+    private attachMoveTarget(element: HTMLElement, getTarget: () => TAbstractFile | null): void {
+        element.addEventListener('dragover', event => {
+            if (!this.fileDrag) return;
+            event.preventDefault();
+            const target = getTarget();
+            const plan = target instanceof TFolder ? planMove(this.app.vault, this.fileDrag, target) : null;
+            element.toggleClass('fpv-drop-target', !!plan && !plan.error && plan.moves.length > 0);
+            element.toggleClass('fpv-drop-invalid', !plan || !!plan.error);
+            if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+        });
+        element.addEventListener('dragleave', event => {
+            if (event.relatedTarget && element.contains(event.relatedTarget as Node)) return;
+            element.removeClass('fpv-drop-target', 'fpv-drop-invalid');
+        });
+        element.addEventListener('drop', event => {
+            if (!this.fileDrag) return;
+            event.preventDefault();
+            event.stopPropagation();
+            const paths = this.fileDrag;
+            this.clearFileDrag();
+            const target = getTarget();
+            if (!(target instanceof TFolder)) { this.reportError(this.t('missing')); return; }
+            void this.moveToFolder(paths, target);
+        });
+    }
+    private async moveToFolder(paths: string[], target: TFolder): Promise<void> {
+        const plan = planMove(this.app.vault, paths, target);
+        if (plan.error) { this.reportError(this.t(plan.error)); return; }
+        if (!plan.moves.length) return;
+        try {
+            for (const move of plan.moves) {
+                const { file, from } = move;
+                if (this.app.vault.getAbstractFileByPath(from) !== file) throw new Error(this.t('missing'));
+                const current = planMove(this.app.vault, [from], target);
+                if (current.error) throw new Error(this.t(current.error));
+                if (!current.moves.length) { move.path = file.path; continue; }
+                move.path = current.moves[0].path;
+                await this.app.fileManager.renameFile(file, move.path);
+            }
+            if (this.closed) return;
+            const region = this.data.pinnedFolders.includes(target.path) ? target.path : this.data.activeFolderPath;
+            if (region !== this.data.activeFolderPath) {
+                this.captureScroll();
+                this.data.activeFolderPath = region;
+            }
+            if (containsPath(region, target.path)) {
+                const zone = getZone(this.data);
+                zone.expanded = [...new Set([...zone.expanded, ...ancestorPaths(plan.moves[0].path, region), target.path])];
+                this.focusedPath = plan.moves[0].path;
+                this.selectedPaths = new Set(plan.moves.map(move => move.path));
+                this.selectionAnchor = plan.moves[0].path;
+            }
+            this.plugin.persist();
+            this.plugin.refreshViews();
+            const row = this.rows.get(plan.moves[0].path);
+            if (row) this.revealRow(row);
+        } catch (error) { this.reportError(error); }
     }
     private toggleFolder(path: string, open?: boolean): void {
         const zone = getZone(this.data);

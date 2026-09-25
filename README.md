@@ -6,8 +6,6 @@ Obsidian 1.8.7+
 
 Pin frequently used folders as sidebar tabs and switch between them with one click. Includes draggable tabs, file management, keyboard navigation, Chinese and English, and light and dark theme support.
 
-![](https://github.com/cimuyang/folder-pin-view/blob/main/Promotion-2.2.1.png)
-
 ## 安装 / Installation
 
 从 [Releases](https://github.com/cimuyang/folder-pin-view/releases) 下载 `main.js`、`manifest.json`、`styles.css`，放入笔记库的 `.obsidian/plugins/folder-pin-view/`，然后在 Obsidian 的第三方插件设置中启用。更新时先停用插件，覆盖这三个文件后重新启用，**保留原有 `data.json`**。
@@ -20,9 +18,9 @@ Download `main.js`, `manifest.json`, and `styles.css` from [Releases](https://gi
 
 Right-click a folder in the native file explorer and choose **Pin folder**. Click a tab to switch regions, drag to reorder, or right-click to unpin. Toolbar buttons create items in the current region; a subfolder's context menu creates items inside it. **Auto-reveal active file** is off by default and can be enabled from the toolbar.
 
-方向键导航，Enter 打开，F2 重命名；Shift 点击连续多选，Ctrl/Cmd 点击增减选择，右键可删除所选项目。鼠标中键或右键菜单可在新标签页打开。
+方向键导航，Enter 打开，F2 重命名；Shift 点击连续多选，Ctrl/Cmd 点击增减选择，右键可删除所选项目。将文件或文件夹拖入其他文件夹或固定标签可移动，已选项目可一起拖动。鼠标中键或右键菜单可在新标签页打开。
 
-Use arrow keys to navigate, Enter to open, and F2 to rename. Shift-click selects a range, while Ctrl/Cmd-click toggles individual items; right-click to delete the selection. Middle-click or the context menu opens a file in a new tab.
+Use arrow keys to navigate, Enter to open, and F2 to rename. Shift-click selects a range, while Ctrl/Cmd-click toggles individual items; right-click to delete the selection. Drag files or folders into another folder or pinned tab to move them, including a selection. Middle-click or the context menu opens a file in a new tab.
 
 ## 开发 / Development
 
@@ -44,6 +42,16 @@ npm run build
 The plugin makes no network requests and collects no telemetry. File operations stay within the current vault, and plugin settings are stored locally in `data.json`.
 
 ## 更新说明 / What's new
+
+### 2.2.4
+
+**拖动移动**支持将文件和文件夹拖入子文件夹或固定标签，也可拖动多选项目；移动前检查重名和循环目录，移动时沿用 Obsidian 的链接更新。
+
+**Drag to move** Move files and folders into a subfolder or pinned tab, including multiple selected items. Name conflicts and folder cycles are checked before moving, and Obsidian updates links.
+
+**依赖安装**锁文件统一使用 npm 官方仓库，并增加 Linux 干净安装检查，方便在 GitHub 和 Obsidian 审查环境复现构建。
+
+**Dependency installation** The lockfile now uses the official npm registry, with a clean Linux install check for reproducible GitHub and Obsidian review builds.
 
 ### 2.2.3
 

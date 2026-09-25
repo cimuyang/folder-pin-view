@@ -190,7 +190,17 @@ export function createApp() {
             vault.trigger('delete', file);
         },
         renameFile: async (file: TAbstractFile, path: string) => {
-            const old = file.path; manager.renamed.push(path);
+            const old = file.path;
+            if (files.has(path)) throw new Error('Already exists');
+            const parentPath = path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '/';
+            const parent = files.get(parentPath);
+            if (!(parent instanceof TFolder)) throw new Error('Missing parent');
+            if (file.parent !== parent) {
+                if (file.parent) file.parent.children = file.parent.children.filter(child => child !== file);
+                parent.children.push(file);
+                file.parent = parent;
+            }
+            manager.renamed.push(path);
             for (const [key, child] of [...files]) if (key === old || key.startsWith(old + '/')) {
                 files.delete(key); child.path = path + key.slice(old.length); files.set(child.path, child);
             }

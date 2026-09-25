@@ -5,6 +5,7 @@ import { ancestorPaths, comparator, containsPath, entryPath, getZone, normalizeD
 import { resolveLanguage, translate } from '../src/i18n';
 import FolderPinPlugin from '../src/main';
 import { createUntitled } from '../src/create';
+import { planMove } from '../src/move';
 import { createApp, installDom, Menu, Notice, TFile } from './obsidian';
 
 test('migrate legacy settings without losing pins, selection, sort or expansion', () => {
@@ -75,6 +76,16 @@ test('minimal horizontal reveal handles both edges, long labels and hidden panel
     assert.equal(revealScroll(100, 200, 120, 80), 100); assert.equal(revealScroll(0, 200, 100, 300), 100);
     assert.equal(revealScroll(42, 0, 200, 100), 42);
 });
+test('move planning rejects conflicts and folder cycles before any write', () => {
+    const h = createApp();
+    ['A/Sub', 'B'].forEach(path => h.add(path, true));
+    ['A/one.md', 'A/Sub/deep.md', 'B/one.md'].forEach(path => h.add(path));
+    const vault = h.app.vault as any;
+    assert.equal(planMove(vault, ['A/one.md', 'A/Sub'], h.files.get('B') as any).error, 'exists');
+    assert.equal(planMove(vault, ['A', 'A/Sub'], h.files.get('A/Sub') as any).error, 'invalidMove');
+    assert.deepEqual(planMove(vault, ['A/Sub', 'A/Sub/deep.md'], h.files.get('B') as any).moves.map(move => move.path), ['B/Sub']);
+    assert.deepEqual(planMove(vault, ['A/one.md'], h.files.get('A') as any).moves, []);
+});
 test('language follows Chinese variants, respects explicit overrides and has translated sort labels', () => {
     assert.equal(resolveLanguage('auto', 'zh-TW'), 'zh'); assert.equal(resolveLanguage('auto', 'fr'), 'en');
     assert.equal(resolveLanguage('en', 'zh'), 'en'); assert.equal(translate('zh', 'newNote'), '新建笔记');
@@ -101,6 +112,70 @@ async function harness(options: any = {}) {
     };
 }
 const settle = () => new Promise(resolve => setTimeout(resolve, 0));
+function drag(h: Awaited<ReturnType<typeof harness>>, source: Element, target: Element): void {
+    const dataTransfer = { setData() {}, effectAllowed: 'none', dropEffect: 'none' };
+    for (const [element, type] of [[source, 'dragstart'], [target, 'dragover'], [target, 'drop'], [source, 'dragend']] as const) {
+        const event = new h.dom.window.Event(type, { bubbles: true, cancelable: true });
+        Object.defineProperty(event, 'dataTransfer', { value: dataTransfer });
+        element.dispatchEvent(event);
+    }
+}
+test('dragging a selected group onto a pinned tab moves both files and reveals them', async () => {
+    const h = await harness();
+    try {
+        h.row('A/one.md').dispatchEvent(new h.dom.window.MouseEvent('click', { bubbles: true, ctrlKey: true }));
+        h.row('A/two.md').dispatchEvent(new h.dom.window.MouseEvent('click', { bubbles: true, ctrlKey: true }));
+        drag(h, h.row('A/one.md'), h.pin('B'));
+        await settle();
+        assert.ok(h.files.has('B/one.md')); assert.ok(h.files.has('B/two.md'));
+        assert.equal(h.plugin.data.activeFolderPath, 'B');
+        assert.ok(h.row('B/one.md').classList.contains('is-selected'));
+        assert.deepEqual(h.app.fileManager.renamed.slice(-2), ['B/one.md', 'B/two.md']);
+    } finally { await h.close(); }
+});
+test('dragging a folder moves descendants once and rejects cycles or collisions', async () => {
+    const h = await harness();
+    try {
+        h.row('A/Sub').dispatchEvent(new h.dom.window.MouseEvent('click', { bubbles: true }));
+        h.row('A/Sub').dispatchEvent(new h.dom.window.MouseEvent('click', { bubbles: true, ctrlKey: true }));
+        h.row('A/Sub/deep.md').dispatchEvent(new h.dom.window.MouseEvent('click', { bubbles: true, ctrlKey: true }));
+        drag(h, h.row('A/Sub'), h.pin('B'));
+        await settle();
+        assert.ok(h.files.has('B/Sub/deep.md'));
+        assert.deepEqual(h.app.fileManager.renamed.slice(-1), ['B/Sub']);
+        drag(h, h.row('B/Sub'), h.row('B/Deep'));
+        await settle();
+        assert.ok(h.files.has('B/Deep/Sub/deep.md'));
+    } finally { await h.close(); }
+});
+test('invalid drag leaves the vault unchanged and reports the reason', async () => {
+    const h = await harness();
+    try {
+        h.add('B/one.md');
+        const before = h.app.fileManager.renamed.length;
+        drag(h, h.row('A/one.md'), h.pin('B'));
+        await settle();
+        assert.equal(h.app.fileManager.renamed.length, before);
+        assert.ok(h.files.has('A/one.md'));
+        assert.ok(Notice.messages.some(message => message.includes('同名')));
+        drag(h, h.row('A/Sub'), h.row('A/Sub'));
+        await settle();
+        assert.equal(h.app.fileManager.renamed.length, before);
+        assert.ok(Notice.messages.some(message => message.includes('自身')));
+    } finally { await h.close(); }
+});
+test('dragging an unselected row moves only that row; pin dragging still reorders tabs', async () => {
+    const h = await harness();
+    try {
+        h.row('A/one.md').dispatchEvent(new h.dom.window.MouseEvent('click', { bubbles: true, ctrlKey: true }));
+        drag(h, h.row('A/two.md'), h.pin('B'));
+        await settle();
+        assert.ok(h.files.has('A/one.md'));
+        assert.ok(h.files.has('B/two.md'));
+        drag(h, h.pin('C'), h.pin('A'));
+        assert.deepEqual(h.plugin.data.pinnedFolders, ['C', 'A', 'B']);
+    } finally { await h.close(); }
+});
 function deferred() {
     let resolve!: () => void;
     const promise = new Promise<void>(done => { resolve = done; });
