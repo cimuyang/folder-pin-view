@@ -212,6 +212,28 @@ function translate(language, key) {
 
 // src/view.ts
 var import_obsidian = require("obsidian");
+
+// src/create.ts
+var reservations = /* @__PURE__ */ new WeakMap();
+async function createUntitled(vault, parent, folder, name) {
+  let pending = reservations.get(vault);
+  if (!pending) reservations.set(vault, pending = /* @__PURE__ */ new Set());
+  for (let suffix = 0; ; suffix++) {
+    if (vault.getAbstractFileByPath(parent.path) !== parent) throw new Error("Parent folder no longer exists.");
+    const path = entryPath(parent.path, name + (suffix ? ` ${suffix}` : ""), folder ? "" : "md");
+    if (pending.has(path) || vault.getAbstractFileByPath(path)) continue;
+    pending.add(path);
+    try {
+      return folder ? await vault.createFolder(path) : await vault.create(path, "");
+    } catch (error) {
+      if (!vault.getAbstractFileByPath(path)) throw error;
+    } finally {
+      pending.delete(path);
+    }
+  }
+}
+
+// src/view.ts
 var VIEW_TYPE = "folder-pin-view";
 var nextLabelId = 0;
 var FolderPinView = class extends import_obsidian.ItemView {
@@ -227,6 +249,7 @@ var FolderPinView = class extends import_obsidian.ItemView {
     this.lastActive = null;
     this.dragPath = null;
     this.editor = null;
+    this.creationId = 0;
     this.closed = false;
     this.lastLanguage = "";
     this.t = (key) => this.plugin.t(key);
@@ -279,6 +302,7 @@ var FolderPinView = class extends import_obsidian.ItemView {
     if (this.data.autoReveal) this.revealActive();
   }
   async onClose() {
+    this.creationId++;
     this.captureScroll();
     this.closed = true;
     if (this.frame !== void 0) this.contentEl.win.cancelAnimationFrame(this.frame);
@@ -302,7 +326,10 @@ var FolderPinView = class extends import_obsidian.ItemView {
       this.localize();
       return;
     }
-    if (this.renderedZone !== zoneKey(this.data.activeFolderPath) && !((_a = this.editor) == null ? void 0 : _a.busy)) this.cancelEditor();
+    if (this.renderedZone !== zoneKey(this.data.activeFolderPath) && !((_a = this.editor) == null ? void 0 : _a.busy)) {
+      this.creationId++;
+      this.cancelEditor();
+    }
     this.renderPins();
     this.renderTree(false);
   }
@@ -463,6 +490,7 @@ var FolderPinView = class extends import_obsidian.ItemView {
   selectRegion(path) {
     var _a;
     if (((_a = this.editor) == null ? void 0 : _a.busy) || !this.data.pinnedFolders.includes(path)) return;
+    this.creationId++;
     this.captureScroll();
     this.cancelEditor();
     this.data.activeFolderPath = path;
@@ -602,6 +630,7 @@ var FolderPinView = class extends import_obsidian.ItemView {
     const current = (_b = (_a = this.app.workspace.getActiveFile()) == null ? void 0 : _a.path) != null ? _b : null;
     this.updateHighlight();
     if (!current || current === this.lastActive) return;
+    this.creationId++;
     this.lastActive = current;
     if (this.data.autoReveal && !this.editor) this.revealActive();
   }
@@ -759,43 +788,45 @@ var FolderPinView = class extends import_obsidian.ItemView {
   reportError(error) {
     new import_obsidian.Notice(this.t("operationFailed") + ": " + (error instanceof Error ? error.message : String(error)));
   }
-  startCreate(folder, parentPath) {
+  async startCreate(folder, parentPath) {
     var _a;
-    if ((_a = this.editor) == null ? void 0 : _a.busy) return;
+    if (this.closed || ((_a = this.editor) == null ? void 0 : _a.busy)) return;
     this.cancelEditor();
+    this.renderTree();
     const parent = !parentPath || parentPath === "/" ? this.app.vault.getRoot() : this.app.vault.getAbstractFileByPath(parentPath);
     if (!(parent instanceof import_obsidian.TFolder)) {
       this.reportError(this.t("missing"));
       return;
     }
     if (!containsPath(this.data.activeFolderPath, parent.path === "/" ? "" : parent.path)) return;
-    if (parent !== this.rootFolder()) {
+    const id = ++this.creationId;
+    const region = this.data.activeFolderPath;
+    try {
+      const created = await createUntitled(this.app.vault, parent, folder, this.t(folder ? "untitledFolder" : "untitled"));
+      if (this.closed || id !== this.creationId || region !== this.data.activeFolderPath) return;
+      if (this.app.vault.getAbstractFileByPath(created.path) !== created || !containsPath(region, created.path)) return;
       const zone = getZone(this.data);
-      zone.expanded = [.../* @__PURE__ */ new Set([...zone.expanded, ...ancestorPaths(parent.path + "/_", this.data.activeFolderPath)])];
+      zone.expanded = [.../* @__PURE__ */ new Set([...zone.expanded, ...ancestorPaths(created.path, region)])];
+      this.focusedPath = created.path;
+      this.renderTree();
+      const row = this.rows.get(created.path);
+      if (row) this.revealRow(row);
+      this.plugin.persist();
+      if (created instanceof import_obsidian.TFile) {
+        await this.app.workspace.getLeaf(false).openFile(created, {
+          active: true,
+          state: { mode: "source" },
+          eState: { rename: "all" }
+        });
+      } else this.startRename(created);
+    } catch (error) {
+      this.reportError(error);
     }
-    this.renderTree();
-    const defaultName = this.t(folder ? "untitledFolder" : "untitled");
-    let name = defaultName;
-    let count = 1;
-    while (this.app.vault.getAbstractFileByPath(entryPath(parent.path, name, folder ? "" : "md"))) name = defaultName + " " + count++;
-    const host = this.tree.createDiv("fpv-editor-row");
-    const parentRow = this.rows.get(parent.path);
-    if (parentRow) parentRow.after(host);
-    else this.tree.prepend(host);
-    const depth = parentRow ? Number(parentRow.style.getPropertyValue("--fpv-depth")) + 1 : 0;
-    host.style.setProperty("--fpv-depth", String(depth));
-    this.beginEditor(host, name, folder ? "newFolder" : "newNote", async (value) => {
-      if (parent !== this.app.vault.getRoot() && this.app.vault.getAbstractFileByPath(parent.path) !== parent) throw new Error(this.t("missing"));
-      const path = entryPath(parent.path, value, folder ? "" : "md");
-      if (this.app.vault.getAbstractFileByPath(path)) throw new Error(this.t("exists"));
-      const created = folder ? await this.app.vault.createFolder(path) : await this.app.vault.create(path, "");
-      this.focusedPath = path;
-      if (created instanceof import_obsidian.TFile) await this.openFile(created);
-    });
   }
   startRename(file) {
     var _a;
     if ((_a = this.editor) == null ? void 0 : _a.busy) return;
+    this.creationId++;
     this.cancelEditor();
     this.renderTree();
     const row = this.rows.get(file.path);
@@ -805,8 +836,9 @@ var FolderPinView = class extends import_obsidian.ItemView {
     row.after(host);
     row.hidden = true;
     const initial = file instanceof import_obsidian.TFile && file.extension ? file.basename : file.name;
-    this.beginEditor(host, initial, "rename", async (value) => {
+    this.beginEditor(host, initial, async (value) => {
       var _a2, _b;
+      if (this.app.vault.getAbstractFileByPath(file.path) !== file) throw new Error(this.t("missing"));
       if (this.app.vault.getAbstractFileByPath(file.path) !== file) throw new Error(this.t("missing"));
       const path = entryPath((_b = (_a2 = file.parent) == null ? void 0 : _a2.path) != null ? _b : "", value, file instanceof import_obsidian.TFile ? file.extension : "");
       if (path === file.path) return;
@@ -816,12 +848,12 @@ var FolderPinView = class extends import_obsidian.ItemView {
       this.focusedPath = path;
     });
   }
-  beginEditor(host, initial, key, action) {
+  beginEditor(host, initial, action) {
     const input = host.createEl("input", {
       cls: "fpv-input",
       type: "text",
       value: initial,
-      attr: { "aria-label": this.t(key), spellcheck: "false" }
+      attr: { "aria-label": this.t("rename"), spellcheck: "false" }
     });
     this.tree.querySelectorAll(".fpv-empty").forEach((el) => {
       el.hidden = true;
@@ -846,7 +878,7 @@ var FolderPinView = class extends import_obsidian.ItemView {
         this.renderTree();
         const row = this.focusedPath ? this.rows.get(this.focusedPath) : null;
         if (row) this.revealRow(row);
-        if (key !== "newNote") this.focusRow(this.focusedPath, false);
+        this.focusRow(this.focusedPath, false);
         this.plugin.persist();
       } catch (failure) {
         if (this.editor !== editor || this.closed) return;

@@ -145,13 +145,18 @@ export function createApp() {
     }
     const workspace = Object.assign(new Events(), {
         factories: new Map<string, any>(), leaves: [] as any[], active: null as TFile | null,
-        opened: [] as { file: TFile; mode: any }[], layoutCallback: () => {},
+        opened: [] as { file: TFile; mode: any; options: any }[], layoutCallback: () => {},
         getActiveFile: () => workspace.active,
         getLeavesOfType: (type: string) => workspace.leaves.filter(leaf => leaf.type === type),
         onLayoutReady: (cb: () => void) => { workspace.layoutCallback = cb; },
         revealLeaf: async (_leaf: any) => {},
-        getLeaf: (mode: any) => ({ openFile: async (file: TFile) => {
-            workspace.active = file; workspace.opened.push({ file, mode }); workspace.trigger('file-open', file);
+        getLeaf: (mode: any) => ({ openFile: async (file: TFile, options?: any) => {
+            workspace.active = file; workspace.opened.push({ file, mode, options });
+            // Model focus transfer only, not Obsidian's private title editor behavior.
+            let editor = document.querySelector<HTMLTextAreaElement>('.mock-note-editor');
+            if (!editor) { editor = document.createElement('textarea'); editor.className = 'mock-note-editor'; document.body.append(editor); }
+            editor.focus();
+            workspace.trigger('file-open', file);
         } }),
         getLeftLeaf: (_split: boolean) => {
             const leaf: any = { app, type: '', view: null, setViewState: async (state: any) => {

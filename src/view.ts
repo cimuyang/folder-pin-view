@@ -2,6 +2,7 @@ import { ItemView, Menu, Notice, setIcon, setTooltip, TAbstractFile, TFile, TFol
 import type FolderPinPlugin from './main';
 import { ancestorPaths, comparator, containsPath, entryPath, getZone, revealScroll, revealZone, SORT_ORDERS, validName, zoneKey } from './model';
 import type { TextKey } from './i18n';
+import { createUntitled } from './create';
 
 export const VIEW_TYPE = 'folder-pin-view';
 let nextLabelId = 0;
@@ -22,6 +23,7 @@ export class FolderPinView extends ItemView {
     private collapseButton!: HTMLButtonElement;
     private followButton!: HTMLButtonElement;
     private editor: EditorState | null = null;
+    private creationId = 0;
     private frame: number | undefined;
     private closed = false;
     private lastLanguage = '';
@@ -68,6 +70,7 @@ export class FolderPinView extends ItemView {
         if (this.data.autoReveal) this.revealActive();
     }
     async onClose(): Promise<void> {
+        this.creationId++;
         this.captureScroll();
         this.closed = true;
         if (this.frame !== undefined) this.contentEl.win.cancelAnimationFrame(this.frame);
@@ -85,7 +88,10 @@ export class FolderPinView extends ItemView {
     sync(): void {
         if (!this.tree || this.closed) return;
         if (this.lastLanguage !== this.plugin.language) { this.localize(); return; }
-        if (this.renderedZone !== zoneKey(this.data.activeFolderPath) && !this.editor?.busy) this.cancelEditor();
+        if (this.renderedZone !== zoneKey(this.data.activeFolderPath) && !this.editor?.busy) {
+            this.creationId++;
+            this.cancelEditor();
+        }
         this.renderPins();
         this.renderTree(false);
     }
@@ -234,6 +240,7 @@ export class FolderPinView extends ItemView {
     }
     private selectRegion(path: string): void {
         if (this.editor?.busy || !this.data.pinnedFolders.includes(path)) return;
+        this.creationId++;
         this.captureScroll();
         this.cancelEditor();
         this.data.activeFolderPath = path;
@@ -344,6 +351,7 @@ export class FolderPinView extends ItemView {
         const current = this.app.workspace.getActiveFile()?.path ?? null;
         this.updateHighlight();
         if (!current || current === this.lastActive) return;
+        this.creationId++;
         this.lastActive = current;
         if (this.data.autoReveal && !this.editor) this.revealActive();
     }
@@ -465,37 +473,40 @@ export class FolderPinView extends ItemView {
     private reportError(error: unknown): void {
         new Notice(this.t('operationFailed') + ': ' + (error instanceof Error ? error.message : String(error)));
     }
-    private startCreate(folder: boolean, parentPath: string): void {
-        if (this.editor?.busy) return;
+    private async startCreate(folder: boolean, parentPath: string): Promise<void> {
+        if (this.closed || this.editor?.busy) return;
         this.cancelEditor();
+        this.renderTree();
         const parent = !parentPath || parentPath === '/' ? this.app.vault.getRoot() : this.app.vault.getAbstractFileByPath(parentPath);
         if (!(parent instanceof TFolder)) { this.reportError(this.t('missing')); return; }
         if (!containsPath(this.data.activeFolderPath, parent.path === '/' ? '' : parent.path)) return;
-        if (parent !== this.rootFolder()) {
+        const id = ++this.creationId;
+        const region = this.data.activeFolderPath;
+        try {
+            const created = await createUntitled(this.app.vault, parent, folder, this.t(folder ? 'untitledFolder' : 'untitled'));
+            // A completed write must not pull the user back after they moved on.
+            if (this.closed || id !== this.creationId || region !== this.data.activeFolderPath) return;
+            if (this.app.vault.getAbstractFileByPath(created.path) !== created || !containsPath(region, created.path)) return;
             const zone = getZone(this.data);
-            zone.expanded = [...new Set([...zone.expanded, ...ancestorPaths(parent.path + '/_', this.data.activeFolderPath)])];
+            zone.expanded = [...new Set([...zone.expanded, ...ancestorPaths(created.path, region)])];
+            this.focusedPath = created.path;
+            this.renderTree();
+            const row = this.rows.get(created.path);
+            if (row) this.revealRow(row);
+            this.plugin.persist();
+            if (created instanceof TFile) {
+                // Let the native file view own title selection, Enter, Escape and focus.
+                await this.app.workspace.getLeaf(false).openFile(created, {
+                    active: true, state: { mode: 'source' }, eState: { rename: 'all' },
+                });
+            } else this.startRename(created);
+        } catch (error) {
+            this.reportError(error);
         }
-        this.renderTree();
-        const defaultName = this.t(folder ? 'untitledFolder' : 'untitled');
-        let name = defaultName;
-        let count = 1;
-        while (this.app.vault.getAbstractFileByPath(entryPath(parent.path, name, folder ? '' : 'md'))) name = defaultName + ' ' + count++;
-        const host = this.tree.createDiv('fpv-editor-row');
-        const parentRow = this.rows.get(parent.path);
-        if (parentRow) parentRow.after(host); else this.tree.prepend(host);
-        const depth = parentRow ? Number(parentRow.style.getPropertyValue('--fpv-depth')) + 1 : 0;
-        host.style.setProperty('--fpv-depth', String(depth));
-        this.beginEditor(host, name, folder ? 'newFolder' : 'newNote', async value => {
-            if (parent !== this.app.vault.getRoot() && this.app.vault.getAbstractFileByPath(parent.path) !== parent) throw new Error(this.t('missing'));
-            const path = entryPath(parent.path, value, folder ? '' : 'md');
-            if (this.app.vault.getAbstractFileByPath(path)) throw new Error(this.t('exists'));
-            const created = folder ? await this.app.vault.createFolder(path) : await this.app.vault.create(path, '');
-            this.focusedPath = path;
-            if (created instanceof TFile) await this.openFile(created);
-        });
     }
     private startRename(file: TAbstractFile): void {
         if (this.editor?.busy) return;
+        this.creationId++;
         this.cancelEditor();
         this.renderTree();
         const row = this.rows.get(file.path);
@@ -505,7 +516,8 @@ export class FolderPinView extends ItemView {
         row.after(host);
         row.hidden = true;
         const initial = file instanceof TFile && file.extension ? file.basename : file.name;
-        this.beginEditor(host, initial, 'rename', async value => {
+        this.beginEditor(host, initial, async value => {
+            if (this.app.vault.getAbstractFileByPath(file.path) !== file) throw new Error(this.t('missing'));
             if (this.app.vault.getAbstractFileByPath(file.path) !== file) throw new Error(this.t('missing'));
             const path = entryPath(file.parent?.path ?? '', value, file instanceof TFile ? file.extension : '');
             if (path === file.path) return;
@@ -515,9 +527,9 @@ export class FolderPinView extends ItemView {
             this.focusedPath = path;
         });
     }
-    private beginEditor(host: HTMLElement, initial: string, key: TextKey, action: (value: string) => Promise<void>): void {
+    private beginEditor(host: HTMLElement, initial: string, action: (value: string) => Promise<void>): void {
         const input = host.createEl('input', { cls: 'fpv-input', type: 'text', value: initial,
-            attr: { 'aria-label': this.t(key), spellcheck: 'false' } });
+            attr: { 'aria-label': this.t('rename'), spellcheck: 'false' } });
         this.tree.querySelectorAll<HTMLElement>('.fpv-empty').forEach(el => { el.hidden = true; });
         const error = host.createDiv({ cls: 'fpv-input-message', text: this.t('editHint'), attr: { role: 'status', 'aria-live': 'polite' } });
         const editor: EditorState = { el: host, input, busy: false, commit: async () => {
@@ -536,7 +548,7 @@ export class FolderPinView extends ItemView {
                 this.renderTree();
                 const row = this.focusedPath ? this.rows.get(this.focusedPath) : null;
                 if (row) this.revealRow(row);
-                if (key !== 'newNote') this.focusRow(this.focusedPath, false);
+                this.focusRow(this.focusedPath, false);
                 this.plugin.persist();
             } catch (failure) {
                 if (this.editor !== editor || this.closed) return;
@@ -555,7 +567,7 @@ export class FolderPinView extends ItemView {
                 event.preventDefault(); this.cancelEditor(); this.renderTree(); this.focusRow(this.focusedPath, false);
             }
         });
-        // Explicit commit avoids accidental creation while switching regions or opening menus.
+        // Leaving the editor cancels only the rename; the existing item is retained.
         input.addEventListener('input', () => { input.removeAttribute('aria-invalid'); error.setText(this.t('editHint')); });
         input.focus({ preventScroll: true });
         input.select();

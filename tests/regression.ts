@@ -4,6 +4,7 @@ import { JSDOM } from 'jsdom';
 import { ancestorPaths, comparator, containsPath, entryPath, getZone, normalizeData, remapData, removePath, revealScroll, revealZone, validName } from '../src/model';
 import { resolveLanguage, translate } from '../src/i18n';
 import FolderPinPlugin from '../src/main';
+import { createUntitled } from '../src/create';
 import { createApp, installDom, Menu, Notice, TFile } from './obsidian';
 
 test('migrate legacy settings without losing pins, selection, sort or expansion', () => {
@@ -100,13 +101,128 @@ async function harness(options: any = {}) {
     };
 }
 const settle = () => new Promise(resolve => setTimeout(resolve, 0));
+function deferred() {
+    let resolve!: () => void;
+    const promise = new Promise<void>(done => { resolve = done; });
+    return { promise, resolve };
+}
+
+test('context creation expands a collapsed parent and reveals the note with auto-reveal off', async () => {
+    const h = await harness();
+    try {
+        h.row('A/Sub').dispatchEvent(new h.dom.window.MouseEvent('contextmenu', { bubbles: true }));
+        Menu.last!.items[0].action(); await settle();
+        assert.ok(h.files.has('A/Sub/未命名.md')); assert.ok(h.row('A/Sub/未命名.md'));
+        assert.ok(getZone(h.plugin.data).expanded.includes('A/Sub'));
+        assert.equal(h.app.workspace.opened[0].file.path, 'A/Sub/未命名.md');
+        assert.equal(h.plugin.data.autoReveal, false);
+    } finally { await h.close(); }
+});
+
+test('overlapping writes reserve distinct names and only the latest request takes focus', async () => {
+    const h = await harness();
+    try {
+        const gate = deferred(), create = h.app.vault.create;
+        h.add('A/未命名.md');
+        h.app.vault.create = async (path, content) => { await gate.promise; return create(path, content); };
+        h.tool(0).click(); h.tool(0).click();
+        assert.equal(h.files.has('A/未命名 1.md'), false);
+        gate.resolve(); await settle();
+        assert.ok(h.files.has('A/未命名 1.md')); assert.ok(h.files.has('A/未命名 2.md'));
+        assert.equal(h.app.workspace.opened.length, 1);
+        assert.equal(h.app.workspace.opened[0].file.path, 'A/未命名 2.md');
+        assert.deepEqual(Notice.messages, []);
+    } finally { await h.close(); }
+});
+
+test('name reservations are shared across views of the same vault', async () => {
+    const h = await harness();
+    const leaf = h.app.workspace.getLeftLeaf(true); await leaf.setViewState({ type: 'folder-pin-view' });
+    try {
+        const gate = deferred(), create = h.app.vault.create;
+        h.app.vault.create = async (path, content) => { await gate.promise; return create(path, content); };
+        h.tool(0).click(); leaf.view.contentEl.querySelector('.fpv-tool').click();
+        gate.resolve(); await settle();
+        assert.ok(h.files.has('A/未命名.md')); assert.ok(h.files.has('A/未命名 1.md'));
+        assert.deepEqual(Notice.messages, []);
+    } finally { await leaf.view.onClose(); await h.close(); }
+});
+
+test('a concurrent external creation is retried without overwriting that file', async () => {
+    const h = await harness();
+    try {
+        const create = h.app.vault.create;
+        let first = true;
+        h.app.vault.create = async (path, content) => {
+            if (first) { first = false; h.add(path); }
+            return create(path, content);
+        };
+        h.tool(0).click(); await settle();
+        assert.ok(h.files.has('A/未命名.md')); assert.ok(h.files.has('A/未命名 1.md'));
+        assert.equal(h.app.workspace.opened[0].file.path, 'A/未命名 1.md');
+        assert.deepEqual(Notice.messages, []);
+    } finally { await h.close(); }
+});
+
+test('switching regions during a delayed write does not reopen the original region or steal focus', async () => {
+    const h = await harness({ autoReveal: true });
+    try {
+        const gate = deferred(), create = h.app.vault.create;
+        h.app.vault.create = async (path, content) => { await gate.promise; return create(path, content); };
+        h.tool(0).click(); h.pin('B').click();
+        gate.resolve(); await settle();
+        assert.ok(h.files.has('A/未命名.md')); assert.equal(h.plugin.data.activeFolderPath, 'B');
+        assert.equal(h.app.workspace.opened.length, 0);
+        h.pin('A').click(); assert.ok(h.row('A/未命名.md'));
+    } finally { await h.close(); }
+});
+
+test('opening another note during a delayed creation keeps the newly chosen note active', async () => {
+    const h = await harness();
+    try {
+        const gate = deferred(), create = h.app.vault.create;
+        h.app.vault.create = async (path, content) => { await gate.promise; return create(path, content); };
+        h.tool(0).click(); h.row('A/one.md').click(); await settle();
+        gate.resolve(); await settle();
+        assert.ok(h.files.has('A/未命名.md')); assert.equal(h.app.workspace.getActiveFile()?.path, 'A/one.md');
+    } finally { await h.close(); }
+});
+
+test('closing a view during creation retains the file without opening it', async () => {
+    const h = await harness();
+    try {
+        const gate = deferred(), create = h.app.vault.create;
+        h.app.vault.create = async (path, content) => { await gate.promise; return create(path, content); };
+        h.tool(0).click(); await h.view.onClose(); gate.resolve(); await settle();
+        assert.ok(h.files.has('A/未命名.md')); assert.equal(h.app.workspace.opened.length, 0);
+    } finally { await h.close(); }
+});
+
+test('opening failure retains the created note and reports the error', async () => {
+    const h = await harness();
+    try {
+        h.app.workspace.getLeaf = () => ({ openFile: async () => { throw new Error('Cannot open'); } });
+        h.tool(0).click(); await settle();
+        assert.ok(h.files.has('A/未命名.md')); assert.ok(h.row('A/未命名.md'));
+        assert.match(Notice.messages[0], /Cannot open/);
+    } finally { await h.close(); }
+});
+
+test('creation refuses a deleted parent instead of recreating it elsewhere', async () => {
+    const h = await harness();
+    try {
+        const parent = h.files.get('A/Sub')!;
+        await h.app.fileManager.trashFile(parent);
+        await assert.rejects(createUntitled(h.app.vault as any, parent as any, false, 'Untitled'), /Parent folder/);
+        assert.equal(h.files.has('A/Sub/Untitled.md'), false);
+    } finally { await h.close(); }
+});
 
 test('creation leaves no container tooltip target while preserving button tooltips and accessible names', async () => {
     const h = await harness();
     try {
-        h.tool(0).click(); const input = h.el.querySelector<HTMLInputElement>('.fpv-input')!;
-        input.value = 'tooltip regression'; h.key(input, 'Enter'); await settle();
-        assert.ok(h.files.has('A/tooltip regression.md'));
+        h.tool(0).click(); await settle();
+        assert.ok(h.files.has('A/未命名.md'));
         for (const [selector, label] of [['.fpv-tree', '文件列表'], ['.fpv-bar', '文件区切换'], ['.fpv-toolbar', '文件区']]) {
             const container = h.el.querySelector(selector)!;
             assert.equal(container.closest('[aria-label]'), null);
@@ -187,25 +303,44 @@ test('turning off auto reveal preserves manually selected region', async () => {
         assert.equal(h.plugin.data.activeFolderPath, 'A'); assert.equal(h.tool(3).getAttribute('aria-pressed'), 'false');
     } finally { await h.close(); }
 });
-test('inline create supports Chinese IME, rejects duplicate names and does not double-submit', async () => {
+test('new notes open immediately with native title rename state and retain editor focus after refresh', async () => {
     const h = await harness();
     try {
-        h.tool(0).click(); const input = h.el.querySelector<HTMLInputElement>('.fpv-input')!;
-        input.value = '新笔记.md'; h.key(input, 'Enter', { isComposing: true }); await settle();
-        assert.equal(h.files.has('A/新笔记.md'), false);
-        input.value = 'one'; h.key(input, 'Enter'); await settle(); assert.equal(input.getAttribute('aria-invalid'), 'true');
-        input.value = '新笔记.md'; h.key(input, 'Enter'); h.key(input, 'Enter'); await settle();
-        assert.ok(h.files.has('A/新笔记.md')); assert.equal(h.files.has('A/新笔记.md.md'), false);
+        h.tool(0).click(); await settle();
+        assert.ok(h.files.has('A/未命名.md'));
         assert.equal(h.app.workspace.opened.length, 1); assert.equal(h.el.querySelector('.fpv-input'), null);
+        assert.deepEqual(h.app.workspace.opened[0].options, { active: true, state: { mode: 'source' }, eState: { rename: 'all' } });
+        assert.ok(h.row('A/未命名.md').classList.contains('is-active'));
+        const focus = h.dom.window.document.activeElement;
+        h.view.renderTree(); assert.equal(h.dom.window.document.activeElement, focus);
+        assert.equal(h.el.contains(focus), false);
     } finally { await h.close(); }
 });
-test('Escape and region switch cancel drafts without creating empty notes', async () => {
+
+test('new folders exist before naming; Escape and region switch retain the folder', async () => {
     const h = await harness();
     try {
-        h.tool(0).click(); h.key(h.el.querySelector('.fpv-input')!, 'Escape'); assert.equal(h.files.has('A/未命名.md'), false);
-        h.tool(0).click(); h.pin('B').click(); assert.equal(h.el.querySelector('.fpv-input'), null); assert.equal(h.files.has('A/未命名.md'), false);
+        h.tool(1).click(); await settle();
+        assert.ok(h.files.has('A/未命名文件夹')); assert.equal(h.app.workspace.opened.length, 0);
+        h.key(h.el.querySelector('.fpv-input')!, 'Escape'); assert.ok(h.row('A/未命名文件夹'));
+        h.tool(1).click(); await settle(); h.pin('B').click();
+        assert.equal(h.el.querySelector('.fpv-input'), null); assert.ok(h.files.has('A/未命名文件夹 1'));
     } finally { await h.close(); }
 });
+
+test('folder naming supports Chinese IME, rejects duplicates and does not double-submit', async () => {
+    const h = await harness();
+    try {
+        h.tool(1).click(); await settle(); const input = h.el.querySelector<HTMLInputElement>('.fpv-input')!;
+        input.value = '新文件夹'; h.key(input, 'Enter', { isComposing: true }); await settle();
+        assert.equal(h.files.has('A/新文件夹'), false);
+        input.value = 'Sub'; h.key(input, 'Enter'); await settle(); assert.equal(input.getAttribute('aria-invalid'), 'true');
+        input.value = '新文件夹'; h.key(input, 'Enter'); h.key(input, 'Enter'); await settle();
+        assert.ok(h.files.has('A/新文件夹')); assert.equal(h.files.has('A/未命名文件夹'), false);
+        assert.deepEqual(h.app.fileManager.renamed, ['A/新文件夹']); assert.equal(h.el.querySelector('.fpv-input'), null);
+    } finally { await h.close(); }
+});
+
 test('rename goes through FileManager and preserves links API contract and extension', async () => {
     const h = await harness();
     try {
@@ -246,10 +381,10 @@ test('external parent rename remaps selected region and deletion falls back to a
 test('root view can create notes before any region is pinned', async () => {
     const h = await harness({ pinnedFolders: [], activeFolderPath: null });
     try {
-        h.tool(0).click(); const input = h.el.querySelector<HTMLInputElement>('.fpv-input')!;
-        input.value = 'root note'; h.key(input, 'Enter'); await settle(); assert.ok(h.files.has('root note.md'));
+        h.tool(0).click(); await settle(); assert.ok(h.files.has('未命名.md'));
     } finally { await h.close(); }
 });
+
 test('restart restores selected region and its per-region state', async () => {
     const h = await harness({ pinnedFolders: ['A', 'B'], activeFolderPath: 'B', zones: {
         '@A': { expanded: ['A/Sub'], scrollTop: 60 }, '@B': { expanded: ['B/Deep'], scrollTop: 120 },
@@ -271,16 +406,19 @@ test('auto-reveal keeps two open views in sync', async () => {
         }
     } finally { await leaf.view.onClose(); await h.close(); }
 });
-test('failed creation keeps the input and error visible without a half-created note', async () => {
+test('failed creation reports an error and releases the name for a retry', async () => {
     const h = await harness();
     try {
+        const create = h.app.vault.create;
         h.app.vault.create = async () => { throw new Error('Disk full'); };
-        h.tool(0).click(); const input = h.el.querySelector<HTMLInputElement>('.fpv-input')!;
-        input.value = 'Will fail'; h.key(input, 'Enter'); await settle();
-        assert.equal(input.disabled, false); assert.equal(input.getAttribute('aria-invalid'), 'true');
-        assert.match(h.el.querySelector('.fpv-input-message')!.textContent!, /Disk full/); assert.equal(h.files.has('A/Will fail.md'), false);
+        h.tool(0).click(); await settle();
+        assert.match(Notice.messages[0], /Disk full/); assert.equal(h.files.has('A/未命名.md'), false);
+        assert.equal(h.app.workspace.opened.length, 0); assert.equal(h.el.querySelector('.fpv-input'), null);
+        h.app.vault.create = create; h.tool(0).click(); await settle();
+        assert.ok(h.files.has('A/未命名.md')); assert.equal(h.app.workspace.opened.length, 1);
     } finally { await h.close(); }
 });
+
 test('slow settings saves are serialized and the newest snapshot wins', async () => {
     const h = await harness();
     try {
