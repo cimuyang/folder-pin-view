@@ -1,4 +1,4 @@
-import { App, getLanguage, Notice, Plugin, PluginSettingTab, Setting, TFile, TFolder } from 'obsidian';
+import { App, getLanguage, Notice, Plugin, PluginSettingTab, TFile, TFolder } from 'obsidian';
 import type { SettingDefinitionItem } from 'obsidian';
 import { normalizeData, PluginData, remapData, removePath, zoneKey } from './model';
 import { resolveLanguage, TextKey, translate } from './i18n';
@@ -128,7 +128,6 @@ export default class FolderPinPlugin extends Plugin {
 
 class FolderPinSettings extends PluginSettingTab {
     constructor(app: App, private plugin: FolderPinPlugin) { super(app, plugin); }
-    // Obsidian 1.13+ indexes these definitions for settings search.
     getSettingDefinitions(): SettingDefinitionItem[] {
         return [
             { name: this.plugin.t('language'), desc: this.plugin.t('languageDesc'),
@@ -157,23 +156,5 @@ class FolderPinSettings extends PluginSettingTab {
                 if (this.plugin.data.autoReveal) view.revealActive();
             });
         }
-    }
-    // Obsidian < 1.13 still calls display().
-    display(): void {
-        const { containerEl, plugin } = this;
-        containerEl.empty();
-        new Setting(containerEl).setName(plugin.t('language')).setDesc(plugin.t('languageDesc'))
-            .addDropdown(dropdown => dropdown.addOptions({ auto: plugin.t('followApp'), zh: '简体中文', en: 'English' })
-                .setValue(plugin.data.language).onChange(value => {
-                    plugin.data.language = value === 'zh' || value === 'en' ? value : 'auto';
-                    plugin.refreshLanguage();
-                    this.display();
-                }));
-        new Setting(containerEl).setName(plugin.t('autoReveal')).setDesc(plugin.t('autoRevealDesc'))
-            .addToggle(toggle => toggle.setValue(plugin.data.autoReveal).onChange(value => {
-                plugin.data.autoReveal = value;
-                plugin.persist();
-                plugin.views().forEach(view => { view.updateToolbar(); if (value) view.revealActive(); });
-            }));
     }
 }

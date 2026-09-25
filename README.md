@@ -45,6 +45,10 @@ The plugin makes no network requests and collects no telemetry. File operations 
 
 ### 2.2.4
 
+**审核兼容性**最低 Obsidian 版本调整为 1.13.0，与设置搜索所需接口一致，并移除旧设置界面实现。
+
+**Review compatibility** The minimum Obsidian version is now 1.13.0, matching the settings-search API; the deprecated settings renderer has been removed.
+
 **拖动移动**支持将文件和文件夹拖入子文件夹或固定标签，也可拖动多选项目；移动前检查重名和循环目录，移动时沿用 Obsidian 的链接更新。
 
 **Drag to move** Move files and folders into a subfolder or pinned tab, including multiple selected items. Name conflicts and folder cycles are checked before moving, and Obsidian updates links.

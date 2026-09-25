@@ -1282,7 +1282,6 @@ var FolderPinSettings = class extends import_obsidian3.PluginSettingTab {
     super(app, plugin);
     this.plugin = plugin;
   }
-  // Obsidian 1.13+ indexes these definitions for settings search.
   getSettingDefinitions() {
     return [
       {
@@ -1319,23 +1318,5 @@ var FolderPinSettings = class extends import_obsidian3.PluginSettingTab {
         if (this.plugin.data.autoReveal) view.revealActive();
       });
     }
-  }
-  // Obsidian < 1.13 still calls display().
-  display() {
-    const { containerEl, plugin } = this;
-    containerEl.empty();
-    new import_obsidian3.Setting(containerEl).setName(plugin.t("language")).setDesc(plugin.t("languageDesc")).addDropdown((dropdown) => dropdown.addOptions({ auto: plugin.t("followApp"), zh: "\u7B80\u4F53\u4E2D\u6587", en: "English" }).setValue(plugin.data.language).onChange((value) => {
-      plugin.data.language = value === "zh" || value === "en" ? value : "auto";
-      plugin.refreshLanguage();
-      this.display();
-    }));
-    new import_obsidian3.Setting(containerEl).setName(plugin.t("autoReveal")).setDesc(plugin.t("autoRevealDesc")).addToggle((toggle) => toggle.setValue(plugin.data.autoReveal).onChange((value) => {
-      plugin.data.autoReveal = value;
-      plugin.persist();
-      plugin.views().forEach((view) => {
-        view.updateToolbar();
-        if (value) view.revealActive();
-      });
-    }));
   }
 };
