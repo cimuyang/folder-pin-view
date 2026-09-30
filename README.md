@@ -4,6 +4,8 @@
 
 Pin frequently used folders as sidebar tabs and switch between parent folders and subfolders with one click.
 
+![](https://github.com/cimuyang/folder-pin-view/blob/main/Folder%20Pin%20View-2.2.5-%E5%AE%A3%E4%BC%A0%E4%BB%8B%E7%BB%8D%E5%9B%BE.png)
+
 **版本 / Version:** 2.2.5 · **Obsidian:** 1.13.0+
 
 ## 功能 / Features
