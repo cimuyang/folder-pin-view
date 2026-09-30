@@ -1,9 +1,10 @@
 import { ItemView, Menu, Notice, setIcon, setTooltip, TAbstractFile, TFile, TFolder, WorkspaceLeaf } from 'obsidian';
 import type FolderPinPlugin from './main';
-import { ancestorPaths, comparator, containsPath, entryPath, getZone, revealScroll, revealZone, SORT_ORDERS, validName, zoneKey } from './model';
+import { ancestorPaths, browsingPath, comparator, containsPath, directChild, entryPath, getZone, revealScroll, revealZone, SORT_ORDERS, validName, zoneKey } from './model';
 import type { TextKey } from './i18n';
 import { createUntitled } from './create';
 import { planMove } from './move';
+import { MoveFolderModal } from './move-picker';
 
 export const VIEW_TYPE = 'folder-pin-view';
 let nextLabelId = 0;
@@ -12,6 +13,10 @@ interface EditorState { el: HTMLElement; input: HTMLInputElement; busy: boolean;
 export class FolderPinView extends ItemView {
     private toolbar!: HTMLElement;
     private pinBar!: HTMLElement;
+    private subfolderBar!: HTMLElement;
+    private subfolderSignature = '';
+    private subfolderDrag: { parent: string; path: string } | null = null;
+    private moving = false;
     private tree!: HTMLElement;
     private containerLabels: { el: HTMLElement; key: TextKey }[] = [];
     private pinSignature = '';
@@ -47,11 +52,12 @@ export class FolderPinView extends ItemView {
         this.contentEl.addClass('fpv-root');
         this.toolbar = this.contentEl.createDiv({ cls: 'nav-header fpv-toolbar', attr: { role: 'toolbar' } });
         this.pinBar = this.contentEl.createDiv({ cls: 'fpv-bar', attr: { role: 'tablist' } });
+        this.subfolderBar = this.contentEl.createDiv({ cls: 'fpv-bar fpv-subfolder-bar', attr: { role: 'tablist' } });
         this.tree = this.contentEl.createDiv({ cls: 'fpv-tree', attr: { role: 'tree', tabindex: '0' } });
         this.containerLabels = [];
         // Obsidian treats aria-label as a hover tooltip. Structural containers
         // need accessible names, but should not show a panel-sized tooltip.
-        for (const [container, key] of [[this.toolbar, 'title'], [this.pinBar, 'regions'], [this.tree, 'files']] as const) {
+        for (const [container, key] of [[this.toolbar, 'title'], [this.pinBar, 'regions'], [this.subfolderBar, 'subfolders'], [this.tree, 'files']] as const) {
             const id = `fpv-label-${++nextLabelId}`;
             const label = this.contentEl.createSpan({ attr: { id, hidden: '' } });
             container.setAttribute('aria-labelledby', id);
@@ -72,6 +78,14 @@ export class FolderPinView extends ItemView {
             if (old !== this.pinBar.scrollLeft) event.preventDefault();
         }, { passive: false });
         this.registerDomEvent(this.pinBar, 'scroll', () => this.updateOverflow());
+        this.registerDomEvent(this.subfolderBar, 'wheel', event => {
+            const bar = this.subfolderBar;
+            if (Math.abs(event.deltaY) <= Math.abs(event.deltaX) || bar.scrollWidth <= bar.clientWidth) return;
+            const old = bar.scrollLeft;
+            bar.scrollLeft += event.deltaY * (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? bar.clientWidth : 1);
+            if (old !== bar.scrollLeft) event.preventDefault();
+        }, { passive: false });
+        this.registerDomEvent(this.subfolderBar, 'scroll', () => this.updateOverflow());
         this.localize();
         if (this.data.autoReveal) this.revealActive();
     }
@@ -95,7 +109,8 @@ export class FolderPinView extends ItemView {
     sync(): void {
         if (!this.tree || this.closed) return;
         if (this.lastLanguage !== this.plugin.language) { this.localize(); return; }
-        if (this.renderedZone !== zoneKey(this.data.activeFolderPath) && !this.editor?.busy) {
+        this.validateSubfolder();
+        if (this.renderedZone !== zoneKey(browsingPath(this.data)) && !this.editor?.busy) {
             this.creationId++;
             this.cancelEditor();
         }
@@ -145,9 +160,9 @@ export class FolderPinView extends ItemView {
         setIcon(this.collapseButton, hasExpanded ? 'chevrons-down-up' : 'chevrons-up-down');
         setTooltip(this.collapseButton, this.t(hasExpanded ? 'collapse' : 'expand'));
     }
-    private rootPath(): string { return this.data.activeFolderPath ?? ''; }
+    private rootPath(): string { return browsingPath(this.data) ?? ''; }
     private rootFolder(): TFolder | null {
-        const root = this.data.activeFolderPath ? this.app.vault.getAbstractFileByPath(this.data.activeFolderPath) : this.app.vault.getRoot();
+        const root = this.rootPath() ? this.app.vault.getAbstractFileByPath(this.rootPath()) : this.app.vault.getRoot();
         return root instanceof TFolder ? root : null;
     }
     private renderPins(): void {
@@ -182,7 +197,9 @@ export class FolderPinView extends ItemView {
                     this.activePin()?.focus({ preventScroll: true });
                 });
                 button.addEventListener('dragstart', event => {
+                    if (this.editor || this.moving) { event.preventDefault(); return; }
                     this.clearFileDrag();
+                    this.subfolderDrag = null;
                     this.dragPath = path;
                     button.addClass('is-dragging');
                     event.dataTransfer?.setData('text/plain', path);
@@ -219,7 +236,106 @@ export class FolderPinView extends ItemView {
             if (hadFocus) this.activePin()?.focus({ preventScroll: true });
         } else this.updatePinSelection();
         this.pinBar.hidden = this.data.pinnedFolders.length === 0;
+        this.renderSubfolders();
         this.schedulePinReveal();
+    }
+    private validateSubfolder(): void {
+        const path = this.data.activeSubfolderPath;
+        if (path && (!this.data.showSubfolderBar || !this.data.activeFolderPath ||
+            !directChild(this.data.activeFolderPath, path) || !(this.app.vault.getAbstractFileByPath(path) instanceof TFolder))) {
+            this.captureScroll();
+            this.data.activeSubfolderPath = null;
+            this.creationId++;
+            if (!this.editor?.busy) this.cancelEditor();
+            this.selectedPaths.clear();
+            this.selectionAnchor = null;
+            this.focusedPath = null;
+            this.plugin.persist();
+        }
+    }
+    private renderSubfolders(): void {
+        const parent = this.data.activeFolderPath;
+        const folder = parent ? this.app.vault.getAbstractFileByPath(parent) : null;
+        const children = folder instanceof TFolder ? folder.children.filter((file): file is TFolder => file instanceof TFolder) : [];
+        const names = comparator('name-asc', this.plugin.language === 'zh' ? 'zh-CN' : 'en');
+        const paths = children.sort((a, b) => names({ name: a.name, folder: true }, { name: b.name, folder: true })).map(file => file.path);
+        const saved = parent ? this.data.subfolderOrders[zoneKey(parent)] ?? [] : [];
+        const order = [...saved.filter(path => paths.includes(path)), ...paths.filter(path => !saved.includes(path))];
+        const signature = JSON.stringify([parent, this.data.showSubfolderBar, order, this.plugin.language]);
+        if (signature !== this.subfolderSignature) {
+            const sameParent = this.subfolderBar.dataset.parent === (parent ?? '');
+            const scroll = sameParent ? this.subfolderBar.scrollLeft : 0;
+            const hadFocus = this.subfolderBar.contains(this.contentEl.doc.activeElement);
+            const focusedTab = hadFocus && sameParent ? (this.contentEl.doc.activeElement as HTMLElement).dataset.path : null;
+            this.subfolderBar.empty();
+            this.subfolderBar.dataset.parent = parent ?? '';
+            this.subfolderSignature = signature;
+            if (this.data.showSubfolderBar && parent) for (const path of order) {
+                const button = this.subfolderBar.createEl('button', { cls: 'fpv-pin fpv-subfolder', text: path.split('/').pop(),
+                    attr: { type: 'button', role: 'tab', draggable: 'true', 'data-path': path } });
+                setTooltip(button, path);
+                button.addEventListener('click', () => this.selectSubfolder(path));
+                button.addEventListener('keydown', event => {
+                    let index = order.indexOf(path);
+                    if (event.key === 'ArrowLeft') index = (index + order.length - 1) % order.length;
+                    else if (event.key === 'ArrowRight') index = (index + 1) % order.length;
+                    else if (event.key === 'Home') index = 0;
+                    else if (event.key === 'End') index = order.length - 1;
+                    else if (event.key === 'Escape') { event.preventDefault(); this.selectRegion(parent); this.activePin()?.focus(); return; }
+                    else return;
+                    event.preventDefault();
+                    this.selectSubfolder(order[index]);
+                    this.subfolderBar.querySelector<HTMLButtonElement>('.is-active')?.focus({ preventScroll: true });
+                });
+                button.addEventListener('dragstart', event => {
+                    if (this.editor || this.moving) { event.preventDefault(); return; }
+                    this.clearFileDrag(); this.dragPath = null;
+                    this.subfolderDrag = { parent, path };
+                    button.addClass('is-dragging');
+                    event.dataTransfer?.setData('text/plain', path);
+                    if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move';
+                });
+                button.addEventListener('dragend', () => {
+                    this.subfolderDrag = null;
+                    this.subfolderBar.querySelectorAll('.is-dragging, .drag-over').forEach(el => el.classList.remove('is-dragging', 'drag-over'));
+                });
+                button.addEventListener('dragover', event => {
+                    if (!this.fileDrag && this.subfolderDrag?.parent === parent && this.subfolderDrag.path !== path) {
+                        event.preventDefault(); button.addClass('drag-over');
+                    }
+                });
+                button.addEventListener('dragleave', () => button.removeClass('drag-over'));
+                button.addEventListener('drop', event => {
+                    if (this.fileDrag) return;
+                    const source = this.subfolderDrag;
+                    this.subfolderDrag = null; button.removeClass('drag-over');
+                    if (!source || source.parent !== parent || source.path === path) return;
+                    event.preventDefault();
+                    const from = order.indexOf(source.path), to = order.indexOf(path);
+                    if (from < 0 || to < 0) return;
+                    const next = [...order]; const [moved] = next.splice(from, 1); next.splice(to, 0, moved);
+                    this.data.subfolderOrders[zoneKey(parent)] = next;
+                    this.plugin.persist(); this.plugin.views().forEach(view => view.renderPins());
+                });
+                this.attachMoveTarget(button, () => this.app.vault.getAbstractFileByPath(path));
+            }
+            this.subfolderBar.scrollLeft = scroll;
+            if (hadFocus) (Array.from(this.subfolderBar.querySelectorAll<HTMLButtonElement>('.fpv-pin')).find(button => button.dataset.path === (focusedTab ?? this.data.activeSubfolderPath)) ?? this.activePin())?.focus({ preventScroll: true });
+        }
+        this.subfolderBar.hidden = !this.data.showSubfolderBar || !order.length;
+        this.subfolderBar.querySelectorAll<HTMLButtonElement>('.fpv-pin').forEach((button, index) => {
+            const active = button.dataset.path === this.data.activeSubfolderPath;
+            button.toggleClass('is-active', active); button.setAttribute('aria-selected', String(active));
+            button.tabIndex = active || (!this.data.activeSubfolderPath && index === 0) ? 0 : -1;
+        });
+    }
+    private selectSubfolder(path: string): void {
+        if (this.editor?.busy || this.moving || !this.data.showSubfolderBar || !this.data.activeFolderPath ||
+            !directChild(this.data.activeFolderPath, path) || !(this.app.vault.getAbstractFileByPath(path) instanceof TFolder)) return;
+        this.creationId++; this.captureScroll(); this.cancelEditor();
+        this.data.activeSubfolderPath = path;
+        this.focusedPath = null; this.selectedPaths.clear(); this.selectionAnchor = null;
+        this.plugin.persist(); this.plugin.refreshViews();
     }
     private updatePinSelection(): void {
         this.pinBar.querySelectorAll<HTMLButtonElement>('.fpv-pin').forEach(button => {
@@ -235,19 +351,22 @@ export class FolderPinView extends ItemView {
         if (this.frame !== undefined) this.contentEl.win.cancelAnimationFrame(this.frame);
         this.frame = this.contentEl.win.requestAnimationFrame(() => {
             this.frame = undefined;
-            const button = this.activePin();
-            if (button) {
-                const bar = this.pinBar.getBoundingClientRect();
+            for (const container of [this.pinBar, this.subfolderBar]) {
+                const button = container.querySelector<HTMLButtonElement>('.is-active');
+                if (!button || container.hidden) continue;
+                const bar = container.getBoundingClientRect();
                 const rect = button.getBoundingClientRect();
-                const start = rect.left - bar.left + this.pinBar.scrollLeft;
-                this.pinBar.scrollLeft = revealScroll(this.pinBar.scrollLeft, this.pinBar.clientWidth, start - 8, rect.width + 16);
+                const start = rect.left - bar.left + container.scrollLeft;
+                container.scrollLeft = revealScroll(container.scrollLeft, container.clientWidth, start - 8, rect.width + 16);
             }
             this.updateOverflow();
         });
     }
     private updateOverflow(): void {
-        this.pinBar.toggleClass('has-before', this.pinBar.scrollLeft > 1);
-        this.pinBar.toggleClass('has-after', this.pinBar.scrollLeft + this.pinBar.clientWidth < this.pinBar.scrollWidth - 1);
+        for (const bar of [this.pinBar, this.subfolderBar]) {
+            bar.toggleClass('has-before', bar.scrollLeft > 1);
+            bar.toggleClass('has-after', bar.scrollLeft + bar.clientWidth < bar.scrollWidth - 1);
+        }
     }
     private selectRegion(path: string): void {
         if (this.editor?.busy || !this.data.pinnedFolders.includes(path)) return;
@@ -255,6 +374,7 @@ export class FolderPinView extends ItemView {
         this.captureScroll();
         this.cancelEditor();
         this.data.activeFolderPath = path;
+        this.data.activeSubfolderPath = null;
         this.focusedPath = null;
         this.selectedPaths.clear();
         this.selectionAnchor = null;
@@ -268,13 +388,15 @@ export class FolderPinView extends ItemView {
     }
     renderTree(capture = true): void {
         if (!this.tree || this.closed || this.editor) return;
+        this.validateSubfolder();
+        this.renderSubfolders();
         if (capture) this.captureScroll();
         const hadFocus = this.tree.contains(this.contentEl.doc.activeElement);
         const previousIndex = this.visible.findIndex(file => file.path === this.focusedPath);
         this.tree.empty();
         this.rows.clear();
         this.visible = [];
-        this.renderedZone = zoneKey(this.data.activeFolderPath);
+        this.renderedZone = zoneKey(browsingPath(this.data));
         const root = this.rootFolder();
         if (root) {
             const expanded = new Set(getZone(this.data).expanded);
@@ -324,8 +446,9 @@ export class FolderPinView extends ItemView {
         this.rows.set(file.path, row);
         this.visible.push(file);
         row.addEventListener('dragstart', event => {
-            if (this.editor || !event.dataTransfer) { event.preventDefault(); return; }
+            if (this.editor || this.moving || !event.dataTransfer) { event.preventDefault(); return; }
             this.dragPath = null;
+            this.subfolderDrag = null;
             this.fileDrag = this.selectedPaths.has(file.path) ? [...this.selectedPaths] : [file.path];
             event.dataTransfer.setData('application/x-folder-pin-view', file.path);
             event.dataTransfer.effectAllowed = 'move';
@@ -393,9 +516,13 @@ export class FolderPinView extends ItemView {
         });
     }
     private async moveToFolder(paths: string[], target: TFolder): Promise<void> {
+        if (this.moving || this.closed) return;
         const plan = planMove(this.app.vault, paths, target);
         if (plan.error) { this.reportError(this.t(plan.error)); return; }
         if (!plan.moves.length) return;
+        this.moving = true;
+        const origin = browsingPath(this.data);
+        let completed = 0;
         try {
             for (const move of plan.moves) {
                 const { file, from } = move;
@@ -405,16 +532,24 @@ export class FolderPinView extends ItemView {
                 if (!current.moves.length) { move.path = file.path; continue; }
                 move.path = current.moves[0].path;
                 await this.app.fileManager.renameFile(file, move.path);
+                completed++;
             }
-            if (this.closed) return;
+            if (this.closed || browsingPath(this.data) !== origin) return;
             const region = this.data.pinnedFolders.includes(target.path) ? target.path : this.data.activeFolderPath;
             if (region !== this.data.activeFolderPath) {
                 this.captureScroll();
                 this.data.activeFolderPath = region;
+                this.data.activeSubfolderPath = null;
             }
-            if (containsPath(region, target.path)) {
+            if (this.data.showSubfolderBar && region && directChild(region, target.path)) {
+                this.captureScroll(); this.data.activeSubfolderPath = target.path;
+            } else if (!containsPath(browsingPath(this.data), target.path)) {
+                this.captureScroll(); this.data.activeSubfolderPath = null;
+            }
+            const root = browsingPath(this.data);
+            if (containsPath(root, target.path)) {
                 const zone = getZone(this.data);
-                zone.expanded = [...new Set([...zone.expanded, ...ancestorPaths(plan.moves[0].path, region), target.path])];
+                zone.expanded = [...new Set([...zone.expanded, ...ancestorPaths(plan.moves[0].path, root), ...(target.path !== root ? [target.path] : [])])];
                 this.focusedPath = plan.moves[0].path;
                 this.selectedPaths = new Set(plan.moves.map(move => move.path));
                 this.selectionAnchor = plan.moves[0].path;
@@ -423,7 +558,10 @@ export class FolderPinView extends ItemView {
             this.plugin.refreshViews();
             const row = this.rows.get(plan.moves[0].path);
             if (row) this.revealRow(row);
-        } catch (error) { this.reportError(error); }
+        } catch (error) {
+            this.plugin.refreshViews();
+            this.reportError(this.t('moveProgress') + `: ${completed}/${plan.moves.length}. ` + (error instanceof Error ? error.message : String(error)));
+        } finally { this.moving = false; }
     }
     private toggleFolder(path: string, open?: boolean): void {
         const zone = getZone(this.data);
@@ -462,14 +600,19 @@ export class FolderPinView extends ItemView {
         if (!file || this.editor || this.closed) return;
         const target = revealZone(this.data.pinnedFolders, this.data.activeFolderPath, file.path);
         if (target === undefined) return;
-        const switched = target !== this.data.activeFolderPath;
-        if (switched) { this.captureScroll(); this.data.activeFolderPath = target; this.renderPins(); }
+        const previous = browsingPath(this.data);
+        this.captureScroll();
+        if (target !== this.data.activeFolderPath) this.data.activeSubfolderPath = null;
+        this.data.activeFolderPath = target;
+        if (this.data.activeSubfolderPath && !containsPath(this.data.activeSubfolderPath, file.path)) this.data.activeSubfolderPath = null;
+        const root = browsingPath(this.data);
+        const switched = root !== previous;
         const zone = getZone(this.data);
         const expanded = new Set(zone.expanded);
         const size = expanded.size;
-        ancestorPaths(file.path, target).forEach(path => expanded.add(path));
+        ancestorPaths(file.path, root).forEach(path => expanded.add(path));
         zone.expanded = [...expanded];
-        if (switched || size !== expanded.size || this.renderedZone !== zoneKey(target)) {
+        if (switched || size !== expanded.size || this.renderedZone !== zoneKey(root)) {
             this.renderPins();
             this.renderTree(!switched);
         }
@@ -585,9 +728,17 @@ export class FolderPinView extends ItemView {
         const menu = new Menu();
         const selected = this.selectedPaths.size > 1 && this.selectedPaths.has(file.path);
         if (selected) {
+            // Snapshot the selection: opening a modal or a later click must not change this operation.
+            const paths = [...this.selectedPaths];
+            menu.addItem(item => item.setTitle(this.t('moveSelected') + ` (${paths.length})…`).setIcon('folder-input')
+                .onClick(() => {
+                    new MoveFolderModal(this.app, paths, this.t('vault'), this.t('chooseFolder'),
+                        target => { void this.moveToFolder(paths, target); }).open();
+                }));
             menu.addItem(item => item.setTitle(this.t('deleteSelected') + ` (${this.selectedPaths.size})`).setIcon('trash-2').setWarning(true)
-                .onClick(() => { void this.deleteSelected(); }));
-            this.app.workspace.trigger('file-menu', menu, file, VIEW_TYPE, this.leaf);
+                .onClick(() => { void this.deleteSelected(paths); }));
+            const files = paths.map(path => this.app.vault.getAbstractFileByPath(path)).filter((item): item is TAbstractFile => item !== null);
+            this.app.workspace.trigger('files-menu', menu, files, VIEW_TYPE, this.leaf);
             return menu;
         }
         if (file instanceof TFolder) {
@@ -613,8 +764,7 @@ export class FolderPinView extends ItemView {
         } catch (error) { this.reportError(error); }
         finally { this.deletingPaths.delete(file.path); }
     }
-    private async deleteSelected(): Promise<void> {
-        const paths = [...this.selectedPaths];
+    private async deleteSelected(paths = [...this.selectedPaths]): Promise<void> {
         for (const path of paths) {
             // Deleting a selected folder also removes selected descendants.
             if (paths.some(other => other !== path && containsPath(other, path))) continue;
@@ -631,13 +781,13 @@ export class FolderPinView extends ItemView {
         this.renderTree();
         const parent = !parentPath || parentPath === '/' ? this.app.vault.getRoot() : this.app.vault.getAbstractFileByPath(parentPath);
         if (!(parent instanceof TFolder)) { this.reportError(this.t('missing')); return; }
-        if (!containsPath(this.data.activeFolderPath, parent.path === '/' ? '' : parent.path)) return;
+        if (!containsPath(browsingPath(this.data), parent.path === '/' ? '' : parent.path)) return;
         const id = ++this.creationId;
-        const region = this.data.activeFolderPath;
+        const region = browsingPath(this.data);
         try {
             const created = await createUntitled(this.app.vault, parent, folder, this.t(folder ? 'untitledFolder' : 'untitled'));
             // A completed write must not pull the user back after they moved on.
-            if (this.closed || id !== this.creationId || region !== this.data.activeFolderPath) return;
+            if (this.closed || id !== this.creationId || region !== browsingPath(this.data)) return;
             if (this.app.vault.getAbstractFileByPath(created.path) !== created || !containsPath(region, created.path)) return;
             const zone = getZone(this.data);
             zone.expanded = [...new Set([...zone.expanded, ...ancestorPaths(created.path, region)])];

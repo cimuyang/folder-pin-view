@@ -23,7 +23,7 @@ __export(main_exports, {
   default: () => FolderPinPlugin
 });
 module.exports = __toCommonJS(main_exports);
-var import_obsidian3 = require("obsidian");
+var import_obsidian4 = require("obsidian");
 
 // src/model.ts
 var SORT_ORDERS = ["name-asc", "name-desc", "mtime-desc", "mtime-asc", "ctime-desc", "ctime-asc"];
@@ -38,15 +38,24 @@ function normalizeData(raw) {
   const active = typeof input.activeFolderPath === "string" && pins.includes(input.activeFolderPath) ? input.activeFolderPath : (_a = pins[0]) != null ? _a : null;
   const sortOrder = SORT_ORDERS.includes(input.sortOrder) ? input.sortOrder : input.sortOrder === "desc" ? "name-desc" : "name-asc";
   const data = {
-    version: 3,
+    version: 4,
     pinnedFolders: pins,
     activeFolderPath: active,
     sortOrder,
+    activeSubfolderPath: null,
+    showSubfolderBar: input.showSubfolderBar !== false,
+    subfolderOrders: /* @__PURE__ */ Object.create(null),
     language: input.language === "zh" || input.language === "en" ? input.language : "auto",
     autoReveal: input.autoReveal === true,
     zones: /* @__PURE__ */ Object.create(null)
   };
-  for (const path of [null, ...pins]) {
+  const subfolder = paths([input.activeSubfolderPath])[0];
+  if (data.showSubfolderBar && active && subfolder && directChild(active, subfolder)) data.activeSubfolderPath = subfolder;
+  for (const parent of pins) {
+    data.subfolderOrders[zoneKey(parent)] = paths(record(input.subfolderOrders)[zoneKey(parent)]).filter((p) => directChild(parent, p));
+  }
+  const savedRoots = Object.keys(record(input.zones)).filter((k) => k.startsWith("@")).map((k) => k.slice(1)).filter((p) => paths([p]).length && pins.some((parent) => containsPath(parent, p)));
+  for (const path of [null, .../* @__PURE__ */ new Set([...pins, ...savedRoots])]) {
     const saved = record(record(input.zones)[zoneKey(path)]);
     data.zones[zoneKey(path)] = {
       expanded: paths((_b = saved.expanded) != null ? _b : input.expandedFolders).filter((p) => containsPath(path, p) && p !== path),
@@ -55,7 +64,14 @@ function normalizeData(raw) {
   }
   return data;
 }
-function getZone(data, path = data.activeFolderPath) {
+function browsingPath(data) {
+  var _a;
+  return data.showSubfolderBar ? (_a = data.activeSubfolderPath) != null ? _a : data.activeFolderPath : data.activeFolderPath;
+}
+function directChild(parent, path) {
+  return path.startsWith(parent + "/") && !path.slice(parent.length + 1).includes("/");
+}
+function getZone(data, path = browsingPath(data)) {
   var _a;
   return (_a = data.zones[zoneKey(path)]) != null ? _a : data.zones[zoneKey(path)] = { expanded: [], scrollTop: 0 };
 }
@@ -80,6 +96,14 @@ function remapData(data, oldPath, newPath) {
   const remap = (p) => containsPath(oldPath, p) ? newPath + p.slice(oldPath.length) : p;
   data.pinnedFolders = [...new Set(data.pinnedFolders.map(remap))];
   if (data.activeFolderPath) data.activeFolderPath = remap(data.activeFolderPath);
+  if (data.activeSubfolderPath) data.activeSubfolderPath = remap(data.activeSubfolderPath);
+  const orders = /* @__PURE__ */ Object.create(null);
+  for (const [key, order] of Object.entries(data.subfolderOrders)) {
+    const parent = remap(key.slice(1));
+    orders[zoneKey(parent)] = order.map(remap).filter((p) => directChild(parent, p));
+  }
+  data.subfolderOrders = orders;
+  if (data.activeSubfolderPath && (!data.activeFolderPath || !directChild(data.activeFolderPath, data.activeSubfolderPath))) data.activeSubfolderPath = null;
   const zones = /* @__PURE__ */ Object.create(null);
   for (const [key, state] of Object.entries(data.zones)) {
     const root = remap(key.slice(1)) || null;
@@ -93,6 +117,11 @@ function removePath(data, path) {
   data.pinnedFolders = data.pinnedFolders.filter((p) => !containsPath(path, p));
   if (data.activeFolderPath && containsPath(path, data.activeFolderPath))
     data.activeFolderPath = (_b = data.pinnedFolders[Math.min(oldIndex, data.pinnedFolders.length - 1)]) != null ? _b : null;
+  if (data.activeSubfolderPath && (containsPath(path, data.activeSubfolderPath) || !data.activeFolderPath || !directChild(data.activeFolderPath, data.activeSubfolderPath))) data.activeSubfolderPath = null;
+  for (const [key, order] of Object.entries(data.subfolderOrders)) {
+    if (containsPath(path, key.slice(1))) delete data.subfolderOrders[key];
+    else data.subfolderOrders[key] = order.filter((p) => !containsPath(path, p));
+  }
   for (const [key, zone] of Object.entries(data.zones)) {
     if (containsPath(path, key.slice(1))) delete data.zones[key];
     else zone.expanded = zone.expanded.filter((p) => !containsPath(path, p));
@@ -126,6 +155,12 @@ function revealScroll(scroll, viewport, start, width) {
 
 // src/i18n.ts
 var en = {
+  subfolders: "Subfolders",
+  showSubfolderBar: "Show subfolder shortcuts",
+  showSubfolderBarDesc: "Show a second row of draggable shortcuts for direct subfolders. Click the parent tab to return to its full contents.",
+  moveSelected: "Move selected items",
+  chooseFolder: "Choose a destination folder",
+  moveProgress: "Items moved",
   title: "Folder Pin View",
   newNote: "New note",
   newFolder: "New folder",
@@ -167,6 +202,12 @@ var en = {
   "ctime-asc": "Created time (old to new)"
 };
 var zh = {
+  subfolders: "\u5B50\u6587\u4EF6\u5939\u5207\u6362",
+  showSubfolderBar: "\u663E\u793A\u5B50\u6587\u4EF6\u5939\u5FEB\u6377\u680F",
+  showSubfolderBarDesc: "\u663E\u793A\u53EF\u62D6\u52A8\u6392\u5E8F\u7684\u76F4\u63A5\u5B50\u6587\u4EF6\u5939\u5FEB\u6377\u680F\u3002\u70B9\u51FB\u7B2C\u4E00\u6392\u7236\u6587\u4EF6\u5939\uFF0C\u8FD4\u56DE\u5176\u5B8C\u6574\u5185\u5BB9\u3002",
+  moveSelected: "\u79FB\u52A8\u6240\u9009\u9879\u76EE",
+  chooseFolder: "\u9009\u62E9\u76EE\u6807\u6587\u4EF6\u5939",
+  moveProgress: "\u5DF2\u79FB\u52A8\u9879\u76EE",
   title: "\u6587\u4EF6\u533A",
   newNote: "\u65B0\u5EFA\u7B14\u8BB0",
   newFolder: "\u65B0\u5EFA\u6587\u4EF6\u5939",
@@ -215,7 +256,7 @@ function translate(language, key) {
 }
 
 // src/view.ts
-var import_obsidian2 = require("obsidian");
+var import_obsidian3 = require("obsidian");
 
 // src/create.ts
 var reservations = /* @__PURE__ */ new WeakMap();
@@ -260,13 +301,40 @@ function planMove(vault, paths2, target) {
   return { moves };
 }
 
+// src/move-picker.ts
+var import_obsidian2 = require("obsidian");
+var MoveFolderModal = class extends import_obsidian2.FuzzySuggestModal {
+  constructor(app, paths2, rootLabel, placeholder, choose) {
+    super(app);
+    this.paths = paths2;
+    this.rootLabel = rootLabel;
+    this.choose = choose;
+    this.setPlaceholder(placeholder);
+  }
+  getItems() {
+    return [.../* @__PURE__ */ new Set([this.app.vault.getRoot(), ...this.app.vault.getAllLoadedFiles()])].filter((file) => file instanceof import_obsidian2.TFolder).filter((folder) => {
+      const plan = planMove(this.app.vault, this.paths, folder);
+      return !plan.error && plan.moves.length > 0;
+    }).sort((a, b) => a.path.localeCompare(b.path, void 0, { numeric: true }));
+  }
+  getItemText(folder) {
+    return folder.isRoot() ? this.rootLabel : folder.path;
+  }
+  onChooseItem(folder) {
+    this.choose(folder);
+  }
+};
+
 // src/view.ts
 var VIEW_TYPE = "folder-pin-view";
 var nextLabelId = 0;
-var FolderPinView = class extends import_obsidian2.ItemView {
+var FolderPinView = class extends import_obsidian3.ItemView {
   constructor(leaf, plugin) {
     super(leaf);
     this.plugin = plugin;
+    this.subfolderSignature = "";
+    this.subfolderDrag = null;
+    this.moving = false;
     this.containerLabels = [];
     this.pinSignature = "";
     this.rows = /* @__PURE__ */ new Map();
@@ -304,9 +372,10 @@ var FolderPinView = class extends import_obsidian2.ItemView {
     this.contentEl.addClass("fpv-root");
     this.toolbar = this.contentEl.createDiv({ cls: "nav-header fpv-toolbar", attr: { role: "toolbar" } });
     this.pinBar = this.contentEl.createDiv({ cls: "fpv-bar", attr: { role: "tablist" } });
+    this.subfolderBar = this.contentEl.createDiv({ cls: "fpv-bar fpv-subfolder-bar", attr: { role: "tablist" } });
     this.tree = this.contentEl.createDiv({ cls: "fpv-tree", attr: { role: "tree", tabindex: "0" } });
     this.containerLabels = [];
-    for (const [container, key] of [[this.toolbar, "title"], [this.pinBar, "regions"], [this.tree, "files"]]) {
+    for (const [container, key] of [[this.toolbar, "title"], [this.pinBar, "regions"], [this.subfolderBar, "subfolders"], [this.tree, "files"]]) {
       const id = `fpv-label-${++nextLabelId}`;
       const label = this.contentEl.createSpan({ attr: { id, hidden: "" } });
       container.setAttribute("aria-labelledby", id);
@@ -320,7 +389,7 @@ var FolderPinView = class extends import_obsidian2.ItemView {
     this.registerDomEvent(this.tree, "contextmenu", (event) => {
       if (event.target === this.tree || event.target.closest(".fpv-empty")) {
         event.preventDefault();
-        this.creationMenu(new import_obsidian2.Menu(), this.rootPath()).showAtMouseEvent(event);
+        this.creationMenu(new import_obsidian3.Menu(), this.rootPath()).showAtMouseEvent(event);
       }
     });
     this.registerDomEvent(this.pinBar, "wheel", (event) => {
@@ -330,6 +399,14 @@ var FolderPinView = class extends import_obsidian2.ItemView {
       if (old !== this.pinBar.scrollLeft) event.preventDefault();
     }, { passive: false });
     this.registerDomEvent(this.pinBar, "scroll", () => this.updateOverflow());
+    this.registerDomEvent(this.subfolderBar, "wheel", (event) => {
+      const bar = this.subfolderBar;
+      if (Math.abs(event.deltaY) <= Math.abs(event.deltaX) || bar.scrollWidth <= bar.clientWidth) return;
+      const old = bar.scrollLeft;
+      bar.scrollLeft += event.deltaY * (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? bar.clientWidth : 1);
+      if (old !== bar.scrollLeft) event.preventDefault();
+    }, { passive: false });
+    this.registerDomEvent(this.subfolderBar, "scroll", () => this.updateOverflow());
     this.localize();
     if (this.data.autoReveal) this.revealActive();
   }
@@ -359,7 +436,8 @@ var FolderPinView = class extends import_obsidian2.ItemView {
       this.localize();
       return;
     }
-    if (this.renderedZone !== zoneKey(this.data.activeFolderPath) && !((_a = this.editor) == null ? void 0 : _a.busy)) {
+    this.validateSubfolder();
+    if (this.renderedZone !== zoneKey(browsingPath(this.data)) && !((_a = this.editor) == null ? void 0 : _a.busy)) {
       this.creationId++;
       this.cancelEditor();
     }
@@ -368,8 +446,8 @@ var FolderPinView = class extends import_obsidian2.ItemView {
   }
   tool(icon, key, handler) {
     const button = this.toolbar.createEl("button", { cls: "clickable-icon nav-action-button fpv-tool", attr: { type: "button" } });
-    (0, import_obsidian2.setIcon)(button, icon);
-    (0, import_obsidian2.setTooltip)(button, this.t(key));
+    (0, import_obsidian3.setIcon)(button, icon);
+    (0, import_obsidian3.setTooltip)(button, this.t(key));
     button.addEventListener("click", handler);
     return button;
   }
@@ -382,7 +460,7 @@ var FolderPinView = class extends import_obsidian2.ItemView {
       void this.startCreate(true, this.rootPath());
     });
     const sort = this.tool("arrow-up-narrow-wide", "sort", () => {
-      const menu = new import_obsidian2.Menu();
+      const menu = new import_obsidian3.Menu();
       SORT_ORDERS.forEach((order, index) => {
         if (index === 2 || index === 4) menu.addSeparator();
         menu.addItem((item) => item.setTitle(this.t(order)).setChecked(this.data.sortOrder === order).onClick(() => {
@@ -410,16 +488,16 @@ var FolderPinView = class extends import_obsidian2.ItemView {
     this.followButton.toggleClass("is-active", this.data.autoReveal);
     this.followButton.setAttribute("aria-pressed", String(this.data.autoReveal));
     const hasExpanded = getZone(this.data).expanded.length > 0;
-    (0, import_obsidian2.setIcon)(this.collapseButton, hasExpanded ? "chevrons-down-up" : "chevrons-up-down");
-    (0, import_obsidian2.setTooltip)(this.collapseButton, this.t(hasExpanded ? "collapse" : "expand"));
+    (0, import_obsidian3.setIcon)(this.collapseButton, hasExpanded ? "chevrons-down-up" : "chevrons-up-down");
+    (0, import_obsidian3.setTooltip)(this.collapseButton, this.t(hasExpanded ? "collapse" : "expand"));
   }
   rootPath() {
     var _a;
-    return (_a = this.data.activeFolderPath) != null ? _a : "";
+    return (_a = browsingPath(this.data)) != null ? _a : "";
   }
   rootFolder() {
-    const root = this.data.activeFolderPath ? this.app.vault.getAbstractFileByPath(this.data.activeFolderPath) : this.app.vault.getRoot();
-    return root instanceof import_obsidian2.TFolder ? root : null;
+    const root = this.rootPath() ? this.app.vault.getAbstractFileByPath(this.rootPath()) : this.app.vault.getRoot();
+    return root instanceof import_obsidian3.TFolder ? root : null;
   }
   renderPins() {
     var _a;
@@ -435,11 +513,11 @@ var FolderPinView = class extends import_obsidian2.ItemView {
           text: path.split("/").pop() || path,
           attr: { type: "button", role: "tab", draggable: "true", "data-path": path, "aria-label": path }
         });
-        (0, import_obsidian2.setTooltip)(button, path);
+        (0, import_obsidian3.setTooltip)(button, path);
         button.addEventListener("click", () => this.selectRegion(path));
         button.addEventListener("contextmenu", (event) => {
           event.preventDefault();
-          new import_obsidian2.Menu().addItem((item) => item.setTitle(this.t("unpin")).setIcon("pin-off").onClick(() => {
+          new import_obsidian3.Menu().addItem((item) => item.setTitle(this.t("unpin")).setIcon("pin-off").onClick(() => {
             void this.plugin.setPinned(path, false);
           })).showAtMouseEvent(event);
         });
@@ -458,7 +536,12 @@ var FolderPinView = class extends import_obsidian2.ItemView {
         });
         button.addEventListener("dragstart", (event) => {
           var _a2;
+          if (this.editor || this.moving) {
+            event.preventDefault();
+            return;
+          }
           this.clearFileDrag();
+          this.subfolderDrag = null;
           this.dragPath = path;
           button.addClass("is-dragging");
           (_a2 = event.dataTransfer) == null ? void 0 : _a2.setData("text/plain", path);
@@ -496,7 +579,132 @@ var FolderPinView = class extends import_obsidian2.ItemView {
       if (hadFocus) (_a = this.activePin()) == null ? void 0 : _a.focus({ preventScroll: true });
     } else this.updatePinSelection();
     this.pinBar.hidden = this.data.pinnedFolders.length === 0;
+    this.renderSubfolders();
     this.schedulePinReveal();
+  }
+  validateSubfolder() {
+    var _a;
+    const path = this.data.activeSubfolderPath;
+    if (path && (!this.data.showSubfolderBar || !this.data.activeFolderPath || !directChild(this.data.activeFolderPath, path) || !(this.app.vault.getAbstractFileByPath(path) instanceof import_obsidian3.TFolder))) {
+      this.captureScroll();
+      this.data.activeSubfolderPath = null;
+      this.creationId++;
+      if (!((_a = this.editor) == null ? void 0 : _a.busy)) this.cancelEditor();
+      this.selectedPaths.clear();
+      this.selectionAnchor = null;
+      this.focusedPath = null;
+      this.plugin.persist();
+    }
+  }
+  renderSubfolders() {
+    var _a, _b, _c;
+    const parent = this.data.activeFolderPath;
+    const folder = parent ? this.app.vault.getAbstractFileByPath(parent) : null;
+    const children = folder instanceof import_obsidian3.TFolder ? folder.children.filter((file) => file instanceof import_obsidian3.TFolder) : [];
+    const names = comparator("name-asc", this.plugin.language === "zh" ? "zh-CN" : "en");
+    const paths2 = children.sort((a, b) => names({ name: a.name, folder: true }, { name: b.name, folder: true })).map((file) => file.path);
+    const saved = parent ? (_a = this.data.subfolderOrders[zoneKey(parent)]) != null ? _a : [] : [];
+    const order = [...saved.filter((path) => paths2.includes(path)), ...paths2.filter((path) => !saved.includes(path))];
+    const signature = JSON.stringify([parent, this.data.showSubfolderBar, order, this.plugin.language]);
+    if (signature !== this.subfolderSignature) {
+      const sameParent = this.subfolderBar.dataset.parent === (parent != null ? parent : "");
+      const scroll = sameParent ? this.subfolderBar.scrollLeft : 0;
+      const hadFocus = this.subfolderBar.contains(this.contentEl.doc.activeElement);
+      const focusedTab = hadFocus && sameParent ? this.contentEl.doc.activeElement.dataset.path : null;
+      this.subfolderBar.empty();
+      this.subfolderBar.dataset.parent = parent != null ? parent : "";
+      this.subfolderSignature = signature;
+      if (this.data.showSubfolderBar && parent) for (const path of order) {
+        const button = this.subfolderBar.createEl("button", {
+          cls: "fpv-pin fpv-subfolder",
+          text: path.split("/").pop(),
+          attr: { type: "button", role: "tab", draggable: "true", "data-path": path }
+        });
+        (0, import_obsidian3.setTooltip)(button, path);
+        button.addEventListener("click", () => this.selectSubfolder(path));
+        button.addEventListener("keydown", (event) => {
+          var _a2, _b2;
+          let index = order.indexOf(path);
+          if (event.key === "ArrowLeft") index = (index + order.length - 1) % order.length;
+          else if (event.key === "ArrowRight") index = (index + 1) % order.length;
+          else if (event.key === "Home") index = 0;
+          else if (event.key === "End") index = order.length - 1;
+          else if (event.key === "Escape") {
+            event.preventDefault();
+            this.selectRegion(parent);
+            (_a2 = this.activePin()) == null ? void 0 : _a2.focus();
+            return;
+          } else return;
+          event.preventDefault();
+          this.selectSubfolder(order[index]);
+          (_b2 = this.subfolderBar.querySelector(".is-active")) == null ? void 0 : _b2.focus({ preventScroll: true });
+        });
+        button.addEventListener("dragstart", (event) => {
+          var _a2;
+          if (this.editor || this.moving) {
+            event.preventDefault();
+            return;
+          }
+          this.clearFileDrag();
+          this.dragPath = null;
+          this.subfolderDrag = { parent, path };
+          button.addClass("is-dragging");
+          (_a2 = event.dataTransfer) == null ? void 0 : _a2.setData("text/plain", path);
+          if (event.dataTransfer) event.dataTransfer.effectAllowed = "move";
+        });
+        button.addEventListener("dragend", () => {
+          this.subfolderDrag = null;
+          this.subfolderBar.querySelectorAll(".is-dragging, .drag-over").forEach((el) => el.classList.remove("is-dragging", "drag-over"));
+        });
+        button.addEventListener("dragover", (event) => {
+          var _a2;
+          if (!this.fileDrag && ((_a2 = this.subfolderDrag) == null ? void 0 : _a2.parent) === parent && this.subfolderDrag.path !== path) {
+            event.preventDefault();
+            button.addClass("drag-over");
+          }
+        });
+        button.addEventListener("dragleave", () => button.removeClass("drag-over"));
+        button.addEventListener("drop", (event) => {
+          if (this.fileDrag) return;
+          const source = this.subfolderDrag;
+          this.subfolderDrag = null;
+          button.removeClass("drag-over");
+          if (!source || source.parent !== parent || source.path === path) return;
+          event.preventDefault();
+          const from = order.indexOf(source.path), to = order.indexOf(path);
+          if (from < 0 || to < 0) return;
+          const next = [...order];
+          const [moved] = next.splice(from, 1);
+          next.splice(to, 0, moved);
+          this.data.subfolderOrders[zoneKey(parent)] = next;
+          this.plugin.persist();
+          this.plugin.views().forEach((view) => view.renderPins());
+        });
+        this.attachMoveTarget(button, () => this.app.vault.getAbstractFileByPath(path));
+      }
+      this.subfolderBar.scrollLeft = scroll;
+      if (hadFocus) (_c = (_b = Array.from(this.subfolderBar.querySelectorAll(".fpv-pin")).find((button) => button.dataset.path === (focusedTab != null ? focusedTab : this.data.activeSubfolderPath))) != null ? _b : this.activePin()) == null ? void 0 : _c.focus({ preventScroll: true });
+    }
+    this.subfolderBar.hidden = !this.data.showSubfolderBar || !order.length;
+    this.subfolderBar.querySelectorAll(".fpv-pin").forEach((button, index) => {
+      const active = button.dataset.path === this.data.activeSubfolderPath;
+      button.toggleClass("is-active", active);
+      button.setAttribute("aria-selected", String(active));
+      button.tabIndex = active || !this.data.activeSubfolderPath && index === 0 ? 0 : -1;
+    });
+  }
+  selectSubfolder(path) {
+    var _a;
+    if (((_a = this.editor) == null ? void 0 : _a.busy) || this.moving || !this.data.showSubfolderBar || !this.data.activeFolderPath || !directChild(this.data.activeFolderPath, path) || !(this.app.vault.getAbstractFileByPath(path) instanceof import_obsidian3.TFolder)) return;
+    this.creationId++;
+    this.captureScroll();
+    this.cancelEditor();
+    this.data.activeSubfolderPath = path;
+    this.focusedPath = null;
+    this.selectedPaths.clear();
+    this.selectionAnchor = null;
+    this.plugin.persist();
+    this.plugin.refreshViews();
   }
   updatePinSelection() {
     this.pinBar.querySelectorAll(".fpv-pin").forEach((button) => {
@@ -514,19 +722,22 @@ var FolderPinView = class extends import_obsidian2.ItemView {
     if (this.frame !== void 0) this.contentEl.win.cancelAnimationFrame(this.frame);
     this.frame = this.contentEl.win.requestAnimationFrame(() => {
       this.frame = void 0;
-      const button = this.activePin();
-      if (button) {
-        const bar = this.pinBar.getBoundingClientRect();
+      for (const container of [this.pinBar, this.subfolderBar]) {
+        const button = container.querySelector(".is-active");
+        if (!button || container.hidden) continue;
+        const bar = container.getBoundingClientRect();
         const rect = button.getBoundingClientRect();
-        const start = rect.left - bar.left + this.pinBar.scrollLeft;
-        this.pinBar.scrollLeft = revealScroll(this.pinBar.scrollLeft, this.pinBar.clientWidth, start - 8, rect.width + 16);
+        const start = rect.left - bar.left + container.scrollLeft;
+        container.scrollLeft = revealScroll(container.scrollLeft, container.clientWidth, start - 8, rect.width + 16);
       }
       this.updateOverflow();
     });
   }
   updateOverflow() {
-    this.pinBar.toggleClass("has-before", this.pinBar.scrollLeft > 1);
-    this.pinBar.toggleClass("has-after", this.pinBar.scrollLeft + this.pinBar.clientWidth < this.pinBar.scrollWidth - 1);
+    for (const bar of [this.pinBar, this.subfolderBar]) {
+      bar.toggleClass("has-before", bar.scrollLeft > 1);
+      bar.toggleClass("has-after", bar.scrollLeft + bar.clientWidth < bar.scrollWidth - 1);
+    }
   }
   selectRegion(path) {
     var _a;
@@ -535,6 +746,7 @@ var FolderPinView = class extends import_obsidian2.ItemView {
     this.captureScroll();
     this.cancelEditor();
     this.data.activeFolderPath = path;
+    this.data.activeSubfolderPath = null;
     this.focusedPath = null;
     this.selectedPaths.clear();
     this.selectionAnchor = null;
@@ -549,22 +761,24 @@ var FolderPinView = class extends import_obsidian2.ItemView {
   renderTree(capture = true) {
     var _a, _b, _c;
     if (!this.tree || this.closed || this.editor) return;
+    this.validateSubfolder();
+    this.renderSubfolders();
     if (capture) this.captureScroll();
     const hadFocus = this.tree.contains(this.contentEl.doc.activeElement);
     const previousIndex = this.visible.findIndex((file) => file.path === this.focusedPath);
     this.tree.empty();
     this.rows.clear();
     this.visible = [];
-    this.renderedZone = zoneKey(this.data.activeFolderPath);
+    this.renderedZone = zoneKey(browsingPath(this.data));
     const root = this.rootFolder();
     if (root) {
       const expanded = new Set(getZone(this.data).expanded);
       const compare = comparator(this.data.sortOrder, this.plugin.language === "zh" ? "zh-CN" : "en");
       const sortInfo = (file) => ({
         name: file.name,
-        folder: file instanceof import_obsidian2.TFolder,
-        mtime: file instanceof import_obsidian2.TFile ? file.stat.mtime : 0,
-        ctime: file instanceof import_obsidian2.TFile ? file.stat.ctime : 0
+        folder: file instanceof import_obsidian3.TFolder,
+        mtime: file instanceof import_obsidian3.TFile ? file.stat.mtime : 0,
+        ctime: file instanceof import_obsidian3.TFile ? file.stat.ctime : 0
       });
       const stack = [];
       const pushChildren = (folder, depth) => {
@@ -576,7 +790,7 @@ var FolderPinView = class extends import_obsidian2.ItemView {
       while (stack.length) {
         const { file, depth, index, count } = stack.pop();
         this.drawRow(file, depth, index, count, expanded.has(file.path));
-        if (file instanceof import_obsidian2.TFolder && expanded.has(file.path)) pushChildren(file, depth + 1);
+        if (file instanceof import_obsidian3.TFolder && expanded.has(file.path)) pushChildren(file, depth + 1);
       }
     }
     if (!this.visible.length) this.tree.createDiv({ cls: "fpv-empty", text: root ? this.t("empty") : this.t("missing") });
@@ -596,7 +810,7 @@ var FolderPinView = class extends import_obsidian2.ItemView {
     this.updateToolbar();
   }
   drawRow(file, depth, index, count, expanded) {
-    const folder = file instanceof import_obsidian2.TFolder;
+    const folder = file instanceof import_obsidian3.TFolder;
     const row = this.tree.createDiv({
       cls: "tree-item-self fpv-row" + (folder ? " fpv-folder" : " fpv-file"),
       attr: {
@@ -612,19 +826,20 @@ var FolderPinView = class extends import_obsidian2.ItemView {
     row.style.setProperty("--fpv-depth", String(depth));
     const arrow = row.createSpan({ cls: "fpv-arrow", attr: { "aria-hidden": "true" } });
     if (folder) {
-      (0, import_obsidian2.setIcon)(arrow, "chevron-right");
+      (0, import_obsidian3.setIcon)(arrow, "chevron-right");
       row.setAttribute("aria-expanded", String(expanded));
     }
-    row.createSpan({ cls: "fpv-name", text: file instanceof import_obsidian2.TFile && file.extension.toLowerCase() === "md" ? file.basename : file.name });
-    (0, import_obsidian2.setTooltip)(row, file.path);
+    row.createSpan({ cls: "fpv-name", text: file instanceof import_obsidian3.TFile && file.extension.toLowerCase() === "md" ? file.basename : file.name });
+    (0, import_obsidian3.setTooltip)(row, file.path);
     this.rows.set(file.path, row);
     this.visible.push(file);
     row.addEventListener("dragstart", (event) => {
-      if (this.editor || !event.dataTransfer) {
+      if (this.editor || this.moving || !event.dataTransfer) {
         event.preventDefault();
         return;
       }
       this.dragPath = null;
+      this.subfolderDrag = null;
       this.fileDrag = this.selectedPaths.has(file.path) ? [...this.selectedPaths] : [file.path];
       event.dataTransfer.setData("application/x-folder-pin-view", file.path);
       event.dataTransfer.effectAllowed = "move";
@@ -656,10 +871,10 @@ var FolderPinView = class extends import_obsidian2.ItemView {
       if (folder) {
         row.focus({ preventScroll: true });
         this.toggleFolder(file.path);
-      } else if (file instanceof import_obsidian2.TFile) void this.openFile(file);
+      } else if (file instanceof import_obsidian3.TFile) void this.openFile(file);
     });
     row.addEventListener("auxclick", (event) => {
-      if (event.button === 1 && file instanceof import_obsidian2.TFile) {
+      if (event.button === 1 && file instanceof import_obsidian3.TFile) {
         event.preventDefault();
         void this.openFile(file, true);
       }
@@ -682,7 +897,7 @@ var FolderPinView = class extends import_obsidian2.ItemView {
       if (!this.fileDrag) return;
       event.preventDefault();
       const target = getTarget();
-      const plan = target instanceof import_obsidian2.TFolder ? planMove(this.app.vault, this.fileDrag, target) : null;
+      const plan = target instanceof import_obsidian3.TFolder ? planMove(this.app.vault, this.fileDrag, target) : null;
       element.toggleClass("fpv-drop-target", !!plan && !plan.error && plan.moves.length > 0);
       element.toggleClass("fpv-drop-invalid", !plan || !!plan.error);
       if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
@@ -698,7 +913,7 @@ var FolderPinView = class extends import_obsidian2.ItemView {
       const paths2 = this.fileDrag;
       this.clearFileDrag();
       const target = getTarget();
-      if (!(target instanceof import_obsidian2.TFolder)) {
+      if (!(target instanceof import_obsidian3.TFolder)) {
         this.reportError(this.t("missing"));
         return;
       }
@@ -706,12 +921,16 @@ var FolderPinView = class extends import_obsidian2.ItemView {
     });
   }
   async moveToFolder(paths2, target) {
+    if (this.moving || this.closed) return;
     const plan = planMove(this.app.vault, paths2, target);
     if (plan.error) {
       this.reportError(this.t(plan.error));
       return;
     }
     if (!plan.moves.length) return;
+    this.moving = true;
+    const origin = browsingPath(this.data);
+    let completed = 0;
     try {
       for (const move of plan.moves) {
         const { file, from } = move;
@@ -724,16 +943,26 @@ var FolderPinView = class extends import_obsidian2.ItemView {
         }
         move.path = current.moves[0].path;
         await this.app.fileManager.renameFile(file, move.path);
+        completed++;
       }
-      if (this.closed) return;
+      if (this.closed || browsingPath(this.data) !== origin) return;
       const region = this.data.pinnedFolders.includes(target.path) ? target.path : this.data.activeFolderPath;
       if (region !== this.data.activeFolderPath) {
         this.captureScroll();
         this.data.activeFolderPath = region;
+        this.data.activeSubfolderPath = null;
       }
-      if (containsPath(region, target.path)) {
+      if (this.data.showSubfolderBar && region && directChild(region, target.path)) {
+        this.captureScroll();
+        this.data.activeSubfolderPath = target.path;
+      } else if (!containsPath(browsingPath(this.data), target.path)) {
+        this.captureScroll();
+        this.data.activeSubfolderPath = null;
+      }
+      const root = browsingPath(this.data);
+      if (containsPath(root, target.path)) {
         const zone = getZone(this.data);
-        zone.expanded = [.../* @__PURE__ */ new Set([...zone.expanded, ...ancestorPaths(plan.moves[0].path, region), target.path])];
+        zone.expanded = [.../* @__PURE__ */ new Set([...zone.expanded, ...ancestorPaths(plan.moves[0].path, root), ...target.path !== root ? [target.path] : []])];
         this.focusedPath = plan.moves[0].path;
         this.selectedPaths = new Set(plan.moves.map((move) => move.path));
         this.selectionAnchor = plan.moves[0].path;
@@ -743,7 +972,10 @@ var FolderPinView = class extends import_obsidian2.ItemView {
       const row = this.rows.get(plan.moves[0].path);
       if (row) this.revealRow(row);
     } catch (error) {
-      this.reportError(error);
+      this.plugin.refreshViews();
+      this.reportError(this.t("moveProgress") + `: ${completed}/${plan.moves.length}. ` + (error instanceof Error ? error.message : String(error)));
+    } finally {
+      this.moving = false;
     }
   }
   toggleFolder(path, open) {
@@ -764,7 +996,7 @@ var FolderPinView = class extends import_obsidian2.ItemView {
       const stack = root ? [...root.children] : [];
       while (stack.length) {
         const file = stack.pop();
-        if (file instanceof import_obsidian2.TFolder) {
+        if (file instanceof import_obsidian3.TFolder) {
           zone.expanded.push(file.path);
           for (const child of file.children) stack.push(child);
         }
@@ -788,18 +1020,19 @@ var FolderPinView = class extends import_obsidian2.ItemView {
     if (!file || this.editor || this.closed) return;
     const target = revealZone(this.data.pinnedFolders, this.data.activeFolderPath, file.path);
     if (target === void 0) return;
-    const switched = target !== this.data.activeFolderPath;
-    if (switched) {
-      this.captureScroll();
-      this.data.activeFolderPath = target;
-      this.renderPins();
-    }
+    const previous = browsingPath(this.data);
+    this.captureScroll();
+    if (target !== this.data.activeFolderPath) this.data.activeSubfolderPath = null;
+    this.data.activeFolderPath = target;
+    if (this.data.activeSubfolderPath && !containsPath(this.data.activeSubfolderPath, file.path)) this.data.activeSubfolderPath = null;
+    const root = browsingPath(this.data);
+    const switched = root !== previous;
     const zone = getZone(this.data);
     const expanded = new Set(zone.expanded);
     const size = expanded.size;
-    ancestorPaths(file.path, target).forEach((path) => expanded.add(path));
+    ancestorPaths(file.path, root).forEach((path) => expanded.add(path));
     zone.expanded = [...expanded];
-    if (switched || size !== expanded.size || this.renderedZone !== zoneKey(target)) {
+    if (switched || size !== expanded.size || this.renderedZone !== zoneKey(root)) {
       this.renderPins();
       this.renderTree(!switched);
     }
@@ -890,17 +1123,17 @@ var FolderPinView = class extends import_obsidian2.ItemView {
         target = this.visible[this.visible.length - 1];
         break;
       case "ArrowRight":
-        if (file instanceof import_obsidian2.TFolder) {
+        if (file instanceof import_obsidian3.TFolder) {
           if (!getZone(this.data).expanded.includes(file.path)) this.toggleFolder(file.path, true);
           else if (((_a = this.visible[index + 1]) == null ? void 0 : _a.parent) === file) target = this.visible[index + 1];
         }
         break;
       case "ArrowLeft":
-        if (file instanceof import_obsidian2.TFolder && getZone(this.data).expanded.includes(file.path)) this.toggleFolder(file.path, false);
+        if (file instanceof import_obsidian3.TFolder && getZone(this.data).expanded.includes(file.path)) this.toggleFolder(file.path, false);
         else if (file.parent && this.rows.has(file.parent.path)) target = file.parent;
         break;
       case "Enter":
-        if (file instanceof import_obsidian2.TFile) void this.openFile(file, event.ctrlKey || event.metaKey);
+        if (file instanceof import_obsidian3.TFile) void this.openFile(file, event.ctrlKey || event.metaKey);
         else this.toggleFolder(file.path);
         break;
       case "F2":
@@ -944,22 +1177,35 @@ var FolderPinView = class extends import_obsidian2.ItemView {
     }));
   }
   fileMenu(file) {
-    const menu = new import_obsidian2.Menu();
+    const menu = new import_obsidian3.Menu();
     const selected = this.selectedPaths.size > 1 && this.selectedPaths.has(file.path);
     if (selected) {
-      menu.addItem((item) => item.setTitle(this.t("deleteSelected") + ` (${this.selectedPaths.size})`).setIcon("trash-2").setWarning(true).onClick(() => {
-        void this.deleteSelected();
+      const paths2 = [...this.selectedPaths];
+      menu.addItem((item) => item.setTitle(this.t("moveSelected") + ` (${paths2.length})\u2026`).setIcon("folder-input").onClick(() => {
+        new MoveFolderModal(
+          this.app,
+          paths2,
+          this.t("vault"),
+          this.t("chooseFolder"),
+          (target) => {
+            void this.moveToFolder(paths2, target);
+          }
+        ).open();
       }));
-      this.app.workspace.trigger("file-menu", menu, file, VIEW_TYPE, this.leaf);
+      menu.addItem((item) => item.setTitle(this.t("deleteSelected") + ` (${this.selectedPaths.size})`).setIcon("trash-2").setWarning(true).onClick(() => {
+        void this.deleteSelected(paths2);
+      }));
+      const files = paths2.map((path) => this.app.vault.getAbstractFileByPath(path)).filter((item) => item !== null);
+      this.app.workspace.trigger("files-menu", menu, files, VIEW_TYPE, this.leaf);
       return menu;
     }
-    if (file instanceof import_obsidian2.TFolder) {
+    if (file instanceof import_obsidian3.TFolder) {
       this.creationMenu(menu, file.path);
       const pinned = this.data.pinnedFolders.includes(file.path);
       menu.addItem((item) => item.setTitle(this.t(pinned ? "unpin" : "pin")).setIcon(pinned ? "pin-off" : "pin").onClick(() => {
         void this.plugin.setPinned(file.path, !pinned);
       }));
-    } else if (file instanceof import_obsidian2.TFile) {
+    } else if (file instanceof import_obsidian3.TFile) {
       menu.addItem((item) => item.setTitle(this.t("openTab")).setIcon("file-plus").onClick(() => {
         void this.openFile(file, true);
       }));
@@ -984,8 +1230,7 @@ var FolderPinView = class extends import_obsidian2.ItemView {
       this.deletingPaths.delete(file.path);
     }
   }
-  async deleteSelected() {
-    const paths2 = [...this.selectedPaths];
+  async deleteSelected(paths2 = [...this.selectedPaths]) {
     for (const path of paths2) {
       if (paths2.some((other) => other !== path && containsPath(other, path))) continue;
       const file = this.app.vault.getAbstractFileByPath(path);
@@ -993,7 +1238,7 @@ var FolderPinView = class extends import_obsidian2.ItemView {
     }
   }
   reportError(error) {
-    new import_obsidian2.Notice(this.t("operationFailed") + ": " + (error instanceof Error ? error.message : String(error)));
+    new import_obsidian3.Notice(this.t("operationFailed") + ": " + (error instanceof Error ? error.message : String(error)));
   }
   async startCreate(folder, parentPath) {
     var _a;
@@ -1001,16 +1246,16 @@ var FolderPinView = class extends import_obsidian2.ItemView {
     this.cancelEditor();
     this.renderTree();
     const parent = !parentPath || parentPath === "/" ? this.app.vault.getRoot() : this.app.vault.getAbstractFileByPath(parentPath);
-    if (!(parent instanceof import_obsidian2.TFolder)) {
+    if (!(parent instanceof import_obsidian3.TFolder)) {
       this.reportError(this.t("missing"));
       return;
     }
-    if (!containsPath(this.data.activeFolderPath, parent.path === "/" ? "" : parent.path)) return;
+    if (!containsPath(browsingPath(this.data), parent.path === "/" ? "" : parent.path)) return;
     const id = ++this.creationId;
-    const region = this.data.activeFolderPath;
+    const region = browsingPath(this.data);
     try {
       const created = await createUntitled(this.app.vault, parent, folder, this.t(folder ? "untitledFolder" : "untitled"));
-      if (this.closed || id !== this.creationId || region !== this.data.activeFolderPath) return;
+      if (this.closed || id !== this.creationId || region !== browsingPath(this.data)) return;
       if (this.app.vault.getAbstractFileByPath(created.path) !== created || !containsPath(region, created.path)) return;
       const zone = getZone(this.data);
       zone.expanded = [.../* @__PURE__ */ new Set([...zone.expanded, ...ancestorPaths(created.path, region)])];
@@ -1019,7 +1264,7 @@ var FolderPinView = class extends import_obsidian2.ItemView {
       const row = this.rows.get(created.path);
       if (row) this.revealRow(row);
       this.plugin.persist();
-      if (created instanceof import_obsidian2.TFile) {
+      if (created instanceof import_obsidian3.TFile) {
         const leaf = this.app.workspace.getLeaf(false);
         this.openingPath = created.path;
         try {
@@ -1051,11 +1296,11 @@ var FolderPinView = class extends import_obsidian2.ItemView {
     host.style.setProperty("--fpv-depth", row.style.getPropertyValue("--fpv-depth"));
     row.after(host);
     row.hidden = true;
-    const initial = file instanceof import_obsidian2.TFile && file.extension ? file.basename : file.name;
+    const initial = file instanceof import_obsidian3.TFile && file.extension ? file.basename : file.name;
     this.beginEditor(host, initial, async (value) => {
       var _a2, _b;
       if (this.app.vault.getAbstractFileByPath(file.path) !== file) throw new Error(this.t("missing"));
-      const path = entryPath((_b = (_a2 = file.parent) == null ? void 0 : _a2.path) != null ? _b : "", value, file instanceof import_obsidian2.TFile ? file.extension : "");
+      const path = entryPath((_b = (_a2 = file.parent) == null ? void 0 : _a2.path) != null ? _b : "", value, file instanceof import_obsidian3.TFile ? file.extension : "");
       if (path === file.path) return;
       const existing = this.app.vault.getAbstractFileByPath(path);
       if (existing && existing !== file) throw new Error(this.t("exists"));
@@ -1141,7 +1386,7 @@ var FolderPinView = class extends import_obsidian2.ItemView {
 };
 
 // src/main.ts
-var FolderPinPlugin = class extends import_obsidian3.Plugin {
+var FolderPinPlugin = class extends import_obsidian4.Plugin {
   constructor() {
     super(...arguments);
     this.data = normalizeData(null);
@@ -1158,7 +1403,7 @@ var FolderPinPlugin = class extends import_obsidian3.Plugin {
     };
   }
   get language() {
-    return resolveLanguage(this.data.language, (0, import_obsidian3.getLanguage)());
+    return resolveLanguage(this.data.language, (0, import_obsidian4.getLanguage)());
   }
   async onload() {
     this.data = normalizeData(await this.loadData());
@@ -1174,7 +1419,7 @@ var FolderPinPlugin = class extends import_obsidian3.Plugin {
     } });
     this.addSettingTab(new FolderPinSettings(this.app, this));
     this.registerEvent(this.app.workspace.on("file-menu", (menu, file, source) => {
-      if (source === VIEW_TYPE || !(file instanceof import_obsidian3.TFolder) || file.isRoot()) return;
+      if (source === VIEW_TYPE || !(file instanceof import_obsidian4.TFolder) || file.isRoot()) return;
       const pinned = this.data.pinnedFolders.includes(file.path);
       menu.addItem((item) => item.setTitle(this.t(pinned ? "unpin" : "pin")).setIcon("pin").onClick(() => {
         void this.setPinned(file.path, !pinned);
@@ -1194,17 +1439,17 @@ var FolderPinPlugin = class extends import_obsidian3.Plugin {
       this.refreshViews();
     }));
     this.registerEvent(this.app.vault.on("modify", (file) => {
-      if (file instanceof import_obsidian3.TFile && this.data.sortOrder.startsWith("mtime")) this.scheduleRefresh();
+      if (file instanceof import_obsidian4.TFile && this.data.sortOrder.startsWith("mtime")) this.scheduleRefresh();
     }));
     this.registerEvent(this.app.workspace.on("file-open", () => this.views().forEach((view) => view.activeFileChanged())));
     this.registerEvent(this.app.workspace.on("active-leaf-change", () => this.views().forEach((view) => view.activeFileChanged())));
     this.app.workspace.onLayoutReady(() => {
       if (this.stopping) return;
       for (const path of [...this.data.pinnedFolders]) {
-        if (!(this.app.vault.getAbstractFileByPath(path) instanceof import_obsidian3.TFolder)) removePath(this.data, path);
+        if (!(this.app.vault.getAbstractFileByPath(path) instanceof import_obsidian4.TFolder)) removePath(this.data, path);
       }
       for (const zone of Object.values(this.data.zones))
-        zone.expanded = zone.expanded.filter((path) => this.app.vault.getAbstractFileByPath(path) instanceof import_obsidian3.TFolder);
+        zone.expanded = zone.expanded.filter((path) => this.app.vault.getAbstractFileByPath(path) instanceof import_obsidian4.TFolder);
       this.refreshViews();
       if (!this.views().length) void this.activateView(false);
       this.persist();
@@ -1225,16 +1470,19 @@ var FolderPinPlugin = class extends import_obsidian3.Plugin {
   }
   async setPinned(path, pinned) {
     var _a;
-    if (pinned && !(this.app.vault.getAbstractFileByPath(path) instanceof import_obsidian3.TFolder)) return;
+    if (pinned && !(this.app.vault.getAbstractFileByPath(path) instanceof import_obsidian4.TFolder)) return;
     this.views().forEach((view) => view.captureScroll());
     const index = this.data.pinnedFolders.indexOf(path);
     if (pinned) {
       if (index === -1) this.data.pinnedFolders.push(path);
       this.data.activeFolderPath = path;
+      this.data.activeSubfolderPath = null;
     } else {
       if (index === -1) return;
       this.data.pinnedFolders.splice(index, 1);
       delete this.data.zones[zoneKey(path)];
+      if (this.data.activeFolderPath === path)
+        this.data.activeSubfolderPath = null;
       if (this.data.activeFolderPath === path)
         this.data.activeFolderPath = (_a = this.data.pinnedFolders[Math.min(index, this.data.pinnedFolders.length - 1)]) != null ? _a : null;
     }
@@ -1267,7 +1515,7 @@ var FolderPinPlugin = class extends import_obsidian3.Plugin {
     const snapshot = JSON.parse(JSON.stringify(this.data));
     this.writeQueue = this.writeQueue.then(() => this.saveData(snapshot)).catch((error) => {
       console.error("[folder-pin-view] Settings save failed", error);
-      new import_obsidian3.Notice(this.t("saveFailed"));
+      new import_obsidian4.Notice(this.t("saveFailed"));
     });
   }
   onunload() {
@@ -1277,7 +1525,7 @@ var FolderPinPlugin = class extends import_obsidian3.Plugin {
     this.flushSave();
   }
 };
-var FolderPinSettings = class extends import_obsidian3.PluginSettingTab {
+var FolderPinSettings = class extends import_obsidian4.PluginSettingTab {
   constructor(app, plugin) {
     super(app, plugin);
     this.plugin = plugin;
@@ -1297,12 +1545,18 @@ var FolderPinSettings = class extends import_obsidian3.PluginSettingTab {
         name: this.plugin.t("autoReveal"),
         desc: this.plugin.t("autoRevealDesc"),
         control: { type: "toggle", key: "autoReveal" }
+      },
+      {
+        name: this.plugin.t("showSubfolderBar"),
+        desc: this.plugin.t("showSubfolderBarDesc"),
+        control: { type: "toggle", key: "showSubfolderBar" }
       }
     ];
   }
   getControlValue(key) {
     if (key === "language") return this.plugin.data.language;
     if (key === "autoReveal") return this.plugin.data.autoReveal;
+    if (key === "showSubfolderBar") return this.plugin.data.showSubfolderBar;
     return void 0;
   }
   setControlValue(key, value) {
@@ -1310,6 +1564,12 @@ var FolderPinSettings = class extends import_obsidian3.PluginSettingTab {
       this.plugin.data.language = value === "zh" || value === "en" ? value : "auto";
       this.plugin.refreshLanguage();
       this.update();
+    } else if (key === "showSubfolderBar") {
+      this.plugin.views().forEach((view) => view.captureScroll());
+      this.plugin.data.showSubfolderBar = value === true;
+      this.plugin.data.activeSubfolderPath = null;
+      this.plugin.persist();
+      this.plugin.refreshViews();
     } else if (key === "autoReveal") {
       this.plugin.data.autoReveal = value === true;
       this.plugin.persist();

@@ -127,6 +127,14 @@ export class Menu {
     }
 }
 export class WorkspaceLeaf {}
+export class FuzzySuggestModal<T> {
+    static last: FuzzySuggestModal<any> | null = null;
+    placeholder = '';
+    constructor(public app: any) {}
+    setPlaceholder(value: string) { this.placeholder = value; }
+    open() { FuzzySuggestModal.last = this; }
+    close() { FuzzySuggestModal.last = null; }
+}
 export class App {}
 
 export function createApp() {
@@ -134,6 +142,7 @@ export function createApp() {
     const files = new Map<string, TAbstractFile>([['/', root]]);
     const vault = Object.assign(new Events(), {
         getRoot: () => root,
+        getAllLoadedFiles: () => [...files.values()],
         getAbstractFileByPath: (path: string) => files.get(path) ?? null,
         createFolder: async (path: string) => add(path, true),
         create: async (path: string, _content: string) => add(path, false),

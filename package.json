@@ -1,6 +1,6 @@
 {
     "name": "folder-pin-view",
-    "version": "2.2.4",
+    "version": "2.2.5",
     "private": true,
     "scripts": {
         "build": "node esbuild.config.mjs",

@@ -3,9 +3,12 @@ export type SortOrder = typeof SORT_ORDERS[number];
 export type Language = 'auto' | 'zh' | 'en';
 export interface ZoneState { expanded: string[]; scrollTop: number }
 export interface PluginData {
-    version: 3;
+    version: 4;
     pinnedFolders: string[];
     activeFolderPath: string | null;
+    activeSubfolderPath: string | null;
+    showSubfolderBar: boolean;
+    subfolderOrders: Record<string, string[]>;
     sortOrder: SortOrder;
     language: Language;
     autoReveal: boolean;
@@ -28,11 +31,20 @@ export function normalizeData(raw: unknown): PluginData {
     const sortOrder = SORT_ORDERS.includes(input.sortOrder as SortOrder) ? input.sortOrder as SortOrder
         : input.sortOrder === 'desc' ? 'name-desc' : 'name-asc';
     const data: PluginData = {
-        version: 3, pinnedFolders: pins, activeFolderPath: active, sortOrder,
+        version: 4, pinnedFolders: pins, activeFolderPath: active, sortOrder,
+        activeSubfolderPath: null, showSubfolderBar: input.showSubfolderBar !== false,
+        subfolderOrders: Object.create(null) as Record<string, string[]>,
         language: input.language === 'zh' || input.language === 'en' ? input.language : 'auto',
         autoReveal: input.autoReveal === true, zones: Object.create(null) as Record<string, ZoneState>,
     };
-    for (const path of [null, ...pins]) {
+    const subfolder = paths([input.activeSubfolderPath])[0];
+    if (data.showSubfolderBar && active && subfolder && directChild(active, subfolder)) data.activeSubfolderPath = subfolder;
+    for (const parent of pins) {
+        data.subfolderOrders[zoneKey(parent)] = paths(record(input.subfolderOrders)[zoneKey(parent)]).filter(p => directChild(parent, p));
+    }
+    const savedRoots = Object.keys(record(input.zones)).filter(k => k.startsWith('@')).map(k => k.slice(1))
+        .filter(p => paths([p]).length && pins.some(parent => containsPath(parent, p)));
+    for (const path of [null, ...new Set([...pins, ...savedRoots])]) {
         const saved = record(record(input.zones)[zoneKey(path)]);
         data.zones[zoneKey(path)] = {
             expanded: paths(saved.expanded ?? input.expandedFolders).filter(p => containsPath(path, p) && p !== path),
@@ -42,7 +54,13 @@ export function normalizeData(raw: unknown): PluginData {
     return data;
 }
 
-export function getZone(data: PluginData, path = data.activeFolderPath): ZoneState {
+export function browsingPath(data: PluginData): string | null {
+    return data.showSubfolderBar ? data.activeSubfolderPath ?? data.activeFolderPath : data.activeFolderPath;
+}
+export function directChild(parent: string, path: string): boolean {
+    return path.startsWith(parent + '/') && !path.slice(parent.length + 1).includes('/');
+}
+export function getZone(data: PluginData, path = browsingPath(data)): ZoneState {
     return data.zones[zoneKey(path)] ?? (data.zones[zoneKey(path)] = { expanded: [], scrollTop: 0 });
 }
 
@@ -70,6 +88,14 @@ export function remapData(data: PluginData, oldPath: string, newPath: string): v
     const remap = (p: string) => containsPath(oldPath, p) ? newPath + p.slice(oldPath.length) : p;
     data.pinnedFolders = [...new Set(data.pinnedFolders.map(remap))];
     if (data.activeFolderPath) data.activeFolderPath = remap(data.activeFolderPath);
+    if (data.activeSubfolderPath) data.activeSubfolderPath = remap(data.activeSubfolderPath);
+    const orders: Record<string, string[]> = Object.create(null) as Record<string, string[]>;
+    for (const [key, order] of Object.entries(data.subfolderOrders)) {
+        const parent = remap(key.slice(1));
+        orders[zoneKey(parent)] = order.map(remap).filter(p => directChild(parent, p));
+    }
+    data.subfolderOrders = orders;
+    if (data.activeSubfolderPath && (!data.activeFolderPath || !directChild(data.activeFolderPath, data.activeSubfolderPath))) data.activeSubfolderPath = null;
     const zones: Record<string, ZoneState> = Object.create(null) as Record<string, ZoneState>;
     for (const [key, state] of Object.entries(data.zones)) {
         const root = remap(key.slice(1)) || null;
@@ -83,6 +109,11 @@ export function removePath(data: PluginData, path: string): void {
     data.pinnedFolders = data.pinnedFolders.filter(p => !containsPath(path, p));
     if (data.activeFolderPath && containsPath(path, data.activeFolderPath))
         data.activeFolderPath = data.pinnedFolders[Math.min(oldIndex, data.pinnedFolders.length - 1)] ?? null;
+    if (data.activeSubfolderPath && (containsPath(path, data.activeSubfolderPath) || !data.activeFolderPath || !directChild(data.activeFolderPath, data.activeSubfolderPath))) data.activeSubfolderPath = null;
+    for (const [key, order] of Object.entries(data.subfolderOrders)) {
+        if (containsPath(path, key.slice(1))) delete data.subfolderOrders[key];
+        else data.subfolderOrders[key] = order.filter(p => !containsPath(path, p));
+    }
     for (const [key, zone] of Object.entries(data.zones)) {
         if (containsPath(path, key.slice(1))) delete data.zones[key];
         else zone.expanded = zone.expanded.filter(p => !containsPath(path, p));

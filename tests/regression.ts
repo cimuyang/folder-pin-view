@@ -6,7 +6,8 @@ import { resolveLanguage, translate } from '../src/i18n';
 import FolderPinPlugin from '../src/main';
 import { createUntitled } from '../src/create';
 import { planMove } from '../src/move';
-import { createApp, installDom, Menu, Notice, TFile } from './obsidian';
+import { createApp, FuzzySuggestModal, installDom, Menu, Notice, TFile } from './obsidian';
+import { MoveFolderModal } from '../src/move-picker';
 
 test('migrate legacy settings without losing pins, selection, sort or expansion', () => {
     const data = normalizeData({ pinnedFolders: ['A', 'B', 'A'], activeFolderPath: 'B', sortOrder: 'desc', expandedFolders: ['A/one', 'B/two'] });
@@ -112,6 +113,242 @@ async function harness(options: any = {}) {
     };
 }
 const settle = () => new Promise(resolve => setTimeout(resolve, 0));
+const subtab = (h: Awaited<ReturnType<typeof harness>>, path: string): HTMLButtonElement =>
+    [...h.el.querySelectorAll<HTMLButtonElement>('.fpv-subfolder')].find(button => button.dataset.path === path)!;
+const childOrder = (h: Awaited<ReturnType<typeof harness>>) =>
+    [...h.el.querySelectorAll<HTMLButtonElement>('.fpv-subfolder')].map(button => button.dataset.path);
+function selectPair(h: Awaited<ReturnType<typeof harness>>) {
+    for (const path of ['A/one.md', 'A/two.md']) h.row(path).dispatchEvent(new h.dom.window.MouseEvent('click', { bubbles: true, ctrlKey: true }));
+}
+function batchPicker(h: Awaited<ReturnType<typeof harness>>): MoveFolderModal {
+    h.row('A/two.md').dispatchEvent(new h.dom.window.MouseEvent('contextmenu', { bubbles: true }));
+    Menu.last!.items.find(item => item.title.startsWith('移动所选项目'))!.action();
+    return FuzzySuggestModal.last as MoveFolderModal;
+}
+
+test('second row defaults on, has only direct subfolders, filters the tree and parent click always resets it', async () => {
+    const h = await harness();
+    try {
+        h.add('A/Sub/Deep', true); h.add('A/Sub/Deep/note.md'); h.view.renderTree();
+        assert.equal(h.plugin.data.showSubfolderBar, true);
+        assert.deepEqual(childOrder(h), ['A/Sub']);
+        assert.ok(h.row('A/one.md')); assert.ok(h.row('A/Sub'));
+        subtab(h, 'A/Sub').click();
+        assert.equal(h.plugin.data.activeFolderPath, 'A'); assert.equal(h.plugin.data.activeSubfolderPath, 'A/Sub');
+        assert.equal(h.pin('A').getAttribute('aria-selected'), 'true');
+        assert.equal(subtab(h, 'A/Sub').getAttribute('aria-selected'), 'true');
+        assert.equal(h.row('A/one.md'), undefined); assert.equal(h.row('A/Sub'), undefined);
+        assert.ok(h.row('A/Sub/deep.md')); h.row('A/Sub/Deep').click(); assert.ok(h.row('A/Sub/Deep/note.md'));
+        h.pin('A').click();
+        assert.equal(h.plugin.data.activeSubfolderPath, null); assert.ok(h.row('A/one.md')); assert.ok(h.row('A/Sub'));
+        assert.equal(subtab(h, 'A/Sub').getAttribute('aria-selected'), 'false');
+        h.pin('C').click(); assert.equal(h.el.querySelector<HTMLElement>('.fpv-subfolder-bar')!.hidden, true);
+    } finally { await h.close(); }
+});
+
+test('settings hide subfolder row, return to parent, and retain manual ordering when enabled again', async () => {
+    const h = await harness({ subfolderOrders: { '@A': ['A/Sub'] } });
+    try {
+        subtab(h, 'A/Sub').click();
+        const settings = h.plugin.settings[0] as any;
+        settings.setControlValue('showSubfolderBar', false);
+        assert.equal(h.plugin.data.activeSubfolderPath, null); assert.ok(h.row('A/one.md'));
+        assert.equal(h.el.querySelector<HTMLElement>('.fpv-subfolder-bar')!.hidden, true);
+        settings.setControlValue('showSubfolderBar', true);
+        assert.deepEqual(childOrder(h), ['A/Sub']); assert.equal(settings.getControlValue('showSubfolderBar'), true);
+    } finally { await h.close(); }
+});
+
+test('child tab sorting persists per parent, appends new folders, and cannot reorder first-row tabs', async () => {
+    const h = await harness();
+    try {
+        h.add('A/Alpha', true); h.add('A/Zeta', true); h.view.renderTree();
+        drag(h, subtab(h, 'A/Zeta'), subtab(h, 'A/Alpha'));
+        assert.deepEqual(childOrder(h), ['A/Zeta', 'A/Alpha', 'A/Sub']);
+        assert.deepEqual(h.app.fileManager.renamed, []);
+        h.pin('B').click(); assert.deepEqual(childOrder(h), ['B/Deep']); h.pin('A').click();
+        assert.deepEqual(childOrder(h), ['A/Zeta', 'A/Alpha', 'A/Sub']);
+        h.add('A/Added', true); h.view.renderTree();
+        assert.deepEqual(childOrder(h), ['A/Zeta', 'A/Alpha', 'A/Sub', 'A/Added']);
+        drag(h, subtab(h, 'A/Zeta'), h.pin('B'));
+        assert.deepEqual(h.plugin.data.pinnedFolders, ['A', 'B', 'C']);
+        drag(h, h.pin('B'), subtab(h, 'A/Sub'));
+        assert.deepEqual(childOrder(h), ['A/Zeta', 'A/Alpha', 'A/Sub', 'A/Added']);
+        const restored = normalizeData(JSON.parse(JSON.stringify(h.plugin.data)));
+        assert.deepEqual(restored.subfolderOrders['@A'], ['A/Zeta', 'A/Alpha', 'A/Sub']);
+    } finally { await h.close(); }
+});
+
+test('parent and child retain separate scroll and expansion across restarts', async () => {
+    const h = await harness({ activeSubfolderPath: 'A/Sub', zones: {
+        '@A': { expanded: ['A/Sub'], scrollTop: 55 }, '@A/Sub': { expanded: [], scrollTop: 90 },
+    } });
+    try {
+        const tree = h.el.querySelector<HTMLElement>('.fpv-tree')!;
+        assert.equal(tree.scrollTop, 90); assert.ok(h.row('A/Sub/deep.md'));
+        h.pin('A').click(); assert.equal(tree.scrollTop, 55); assert.ok(h.row('A/Sub/deep.md'));
+        subtab(h, 'A/Sub').click(); assert.equal(tree.scrollTop, 90);
+        tree.scrollTop = 120; h.view.captureScroll();
+        assert.equal(getZone(normalizeData(JSON.parse(JSON.stringify(h.plugin.data)))).scrollTop, 120);
+    } finally { await h.close(); }
+});
+
+test('renames preserve selected child and ordering; moves outside parent and deletion fall back cleanly', async () => {
+    const h = await harness({ subfolderOrders: { '@A': ['A/Sub'] } });
+    try {
+        subtab(h, 'A/Sub').click();
+        await h.app.fileManager.renameFile(h.files.get('A/Sub')!, 'A/Renamed');
+        assert.equal(h.plugin.data.activeSubfolderPath, 'A/Renamed'); assert.ok(h.row('A/Renamed/deep.md'));
+        assert.deepEqual(childOrder(h), ['A/Renamed']);
+        assert.deepEqual(h.plugin.data.subfolderOrders['@A'], ['A/Renamed']);
+        await h.app.fileManager.renameFile(h.files.get('A')!, 'Parent');
+        assert.equal(h.plugin.data.activeFolderPath, 'Parent'); assert.equal(h.plugin.data.activeSubfolderPath, 'Parent/Renamed');
+        assert.deepEqual(h.plugin.data.subfolderOrders['@Parent'], ['Parent/Renamed']);
+        await h.app.fileManager.renameFile(h.files.get('Parent/Renamed')!, 'B/Renamed');
+        assert.equal(h.plugin.data.activeSubfolderPath, null); assert.ok(h.row('Parent/one.md'));
+        assert.deepEqual(childOrder(h), []);
+        h.pin('B').click(); subtab(h, 'B/Renamed').click();
+        await h.app.fileManager.trashFile(h.files.get('B/Renamed')!);
+        assert.equal(h.plugin.data.activeSubfolderPath, null); assert.ok(h.row('B/other.md'));
+    } finally { await h.close(); }
+});
+
+test('child toolbar creates in selected child and delayed creation does not steal parent focus', async () => {
+    const h = await harness();
+    try {
+        subtab(h, 'A/Sub').click(); h.tool(0).click(); await settle();
+        assert.ok(h.files.has('A/Sub/未命名.md')); assert.ok(h.row('A/Sub/未命名.md'));
+        assert.equal(h.files.has('A/未命名.md'), false);
+        const pending = deferred(); const original = h.app.vault.create;
+        h.app.vault.create = async (path, content) => { await pending.promise; return original(path, content); };
+        const count = h.app.workspace.opened.length;
+        h.tool(0).click(); h.pin('A').click(); pending.resolve(); await settle();
+        assert.equal(h.plugin.data.activeSubfolderPath, null); assert.equal(h.app.workspace.opened.length, count);
+        assert.ok(h.files.has('A/Sub/未命名 1.md'));
+    } finally { await h.close(); }
+});
+
+test('reveal retains child for its notes and returns to parent for sibling notes; keyboard returns with Escape', async () => {
+    const h = await harness({ autoReveal: true });
+    try {
+        subtab(h, 'A/Sub').click(); h.row('A/Sub/deep.md').click(); await settle();
+        assert.equal(h.plugin.data.activeSubfolderPath, 'A/Sub');
+        await h.app.workspace.getLeaf(false).openFile(h.files.get('A/one.md') as TFile);
+        assert.equal(h.plugin.data.activeSubfolderPath, null); assert.ok(h.row('A/one.md'));
+        h.key(subtab(h, 'A/Sub'), 'Home'); assert.equal(h.plugin.data.activeSubfolderPath, 'A/Sub');
+        h.key(subtab(h, 'A/Sub'), 'Escape'); assert.equal(h.plugin.data.activeSubfolderPath, null);
+        assert.equal(h.dom.window.document.activeElement, h.pin('A'));
+    } finally { await h.close(); }
+});
+
+test('right-click move passes the whole selection to integrations and moves the snapshot using one picker', async () => {
+    const h = await harness();
+    try {
+        const single: string[] = [], batch: string[][] = [];
+        h.app.workspace.on('file-menu', (_menu, file) => single.push(file.path));
+        h.app.workspace.on('files-menu', (_menu, files) => batch.push(files.map((file: any) => file.path)));
+        selectPair(h); const picker = batchPicker(h);
+        assert.deepEqual(single, []); assert.deepEqual(batch, [['A/one.md', 'A/two.md']]);
+        assert.ok(picker.getItems().some(folder => folder.path === '/'));
+        assert.equal(picker.getItems().some(folder => folder.path === 'A'), false);
+        h.row('A/Sub').click(); // A later click must not change the captured operation.
+        picker.onChooseItem(h.files.get('B') as any); await settle();
+        assert.deepEqual(h.app.fileManager.renamed, ['B/one.md', 'B/two.md']);
+        assert.ok(h.files.has('A/Sub/deep.md')); assert.ok(h.row('B/one.md').classList.contains('is-selected'));
+    } finally { await h.close(); }
+});
+
+test('batch move checks all conflicts before writing and reports partial failure accurately', async () => {
+    const h = await harness();
+    try {
+        selectPair(h); const picker = batchPicker(h); h.add('B/two.md');
+        assert.equal(picker.getItems().some(folder => folder.path === 'B'), false);
+        picker.onChooseItem(h.files.get('B') as any); await settle();
+        assert.deepEqual(h.app.fileManager.renamed, []); assert.ok(Notice.messages.at(-1)!.includes('同名'));
+        const original = h.app.fileManager.renameFile;
+        h.app.fileManager.renameFile = async (file, path) => { if (file.path === 'A/two.md') throw new Error('Disk failure'); return original(file, path); };
+        picker.onChooseItem(h.files.get('C') as any); await settle();
+        assert.ok(h.files.has('C/one.md')); assert.ok(h.files.has('A/two.md'));
+        assert.match(Notice.messages.at(-1)!, /1\/2.*Disk failure/);
+    } finally { await h.close(); }
+});
+
+test('batch picker cancellation and right-clicking unselected items leave the group untouched', async () => {
+    const h = await harness();
+    try {
+        selectPair(h); batchPicker(h).close(); assert.deepEqual(h.app.fileManager.renamed, []);
+        h.row('A/Sub').dispatchEvent(new h.dom.window.MouseEvent('contextmenu', { bubbles: true }));
+        assert.equal(Menu.last!.items.some(item => item.title.startsWith('移动所选项目')), false);
+        assert.equal(h.el.querySelectorAll('.fpv-row.is-selected').length, 1);
+    } finally { await h.close(); }
+});
+
+test('file drag into second row moves files, while folder and descendant batch move only once', async () => {
+    const h = await harness();
+    try {
+        selectPair(h); drag(h, h.row('A/one.md'), subtab(h, 'A/Sub')); await settle();
+        assert.ok(h.row('A/Sub/one.md')); assert.ok(h.row('A/Sub/two.md'));
+        assert.equal(h.plugin.data.activeSubfolderPath, 'A/Sub');
+        h.pin('A').click(); h.row('A/Sub').click();
+        h.row('A/Sub/deep.md').dispatchEvent(new h.dom.window.MouseEvent('click', { bubbles: true, ctrlKey: true }));
+        h.row('A/Sub').dispatchEvent(new h.dom.window.MouseEvent('contextmenu', { bubbles: true }));
+        Menu.last!.items.find(item => item.title.startsWith('移动所选项目'))!.action();
+        const picker = FuzzySuggestModal.last as MoveFolderModal;
+        assert.equal(picker.getItems().some(folder => folder.path === 'A/Sub'), false);
+        picker.onChooseItem(h.files.get('B') as any); await settle();
+        assert.deepEqual(h.app.fileManager.renamed.slice(-1), ['B/Sub']); assert.ok(h.files.has('B/Sub/deep.md'));
+    } finally { await h.close(); }
+});
+
+test('normalization rejects malformed child paths, preserves default-on upgrade and supports special folder names', () => {
+    const data = normalizeData({ pinnedFolders: ['__proto__'], activeSubfolderPath: '__proto__/Sub', subfolderOrders: {
+        '@__proto__': ['__proto__/Sub', '__proto__/Sub', '__proto__/Deep/More', '../bad'],
+    }, zones: { '@__proto__/Sub': { scrollTop: 60, expanded: ['__proto__/Sub/Deep'] } } });
+    assert.equal(data.showSubfolderBar, true); assert.deepEqual(data.subfolderOrders['@__proto__'], ['__proto__/Sub']);
+    assert.equal(getZone(data).scrollTop, 60);
+    assert.equal(normalizeData({ ...data, showSubfolderBar: false }).activeSubfolderPath, null);
+    assert.equal(normalizeData({ ...data, activeSubfolderPath: '__proto__/Sub/Deep' }).activeSubfolderPath, null);
+});
+
+test('two views synchronize child filter and its disabled setting without retaining old file selection', async () => {
+    const h = await harness();
+    const leaf = h.app.workspace.getLeftLeaf(true); await leaf.setViewState({ type: 'folder-pin-view' });
+    try {
+        selectPair(h); subtab(h, 'A/Sub').click();
+        assert.ok(leaf.view.contentEl.querySelector('[data-path="A/Sub/deep.md"]'));
+        assert.equal(leaf.view.contentEl.querySelector('.fpv-row[data-path="A/one.md"]'), null);
+        assert.equal(h.el.querySelectorAll('.fpv-row.is-selected').length, 0);
+        (h.plugin.settings[0] as any).setControlValue('showSubfolderBar', false);
+        assert.ok(leaf.view.contentEl.querySelector('.fpv-row[data-path="A/one.md"]'));
+        assert.equal(leaf.view.contentEl.querySelector('.fpv-subfolder-bar').hidden, true);
+    } finally { await leaf.view.onClose(); await h.close(); }
+});
+
+test('a pending batch move cannot steal navigation or be submitted twice', async () => {
+    const h = await harness();
+    try {
+        selectPair(h); const picker = batchPicker(h); const pending = deferred();
+        const original = h.app.fileManager.renameFile;
+        h.app.fileManager.renameFile = async (file, path) => { await pending.promise; return original(file, path); };
+        picker.onChooseItem(h.files.get('B') as any);
+        picker.onChooseItem(h.files.get('C') as any);
+        h.pin('C').click(); pending.resolve(); await settle();
+        assert.deepEqual(h.app.fileManager.renamed, ['B/one.md', 'B/two.md']);
+        assert.equal(h.plugin.data.activeFolderPath, 'C'); assert.equal(h.plugin.data.activeSubfolderPath, null);
+    } finally { await h.close(); }
+});
+
+test('a missing restored child falls back to its parent and invalid saved order entries are ignored', async () => {
+    const h = await harness({ activeSubfolderPath: 'A/Gone', subfolderOrders: { '@A': ['A/Gone', 'A/Sub'] } });
+    try {
+        assert.equal(h.plugin.data.activeSubfolderPath, null); assert.ok(h.row('A/one.md'));
+        assert.deepEqual(childOrder(h), ['A/Sub']);
+        const button = subtab(h, 'A/Sub'); button.focus();
+        h.add('A/New', true); h.view.renderTree();
+        assert.equal(h.dom.window.document.activeElement, subtab(h, 'A/Sub'));
+        assert.equal(Notice.messages.length, 0);
+    } finally { await h.close(); }
+});
 function drag(h: Awaited<ReturnType<typeof harness>>, source: Element, target: Element): void {
     const dataTransfer = { setData() {}, effectAllowed: 'none', dropEffect: 'none' };
     for (const [element, type] of [[source, 'dragstart'], [target, 'dragover'], [target, 'drop'], [source, 'dragend']] as const) {
@@ -319,7 +556,7 @@ test('accessible container labels remain unique with multiple open views', async
     try {
         const containers = [...h.dom.window.document.querySelectorAll('[aria-labelledby]')];
         const ids = containers.map(el => el.getAttribute('aria-labelledby'));
-        assert.equal(ids.length, 6); assert.equal(new Set(ids).size, 6);
+        assert.equal(ids.length, 8); assert.equal(new Set(ids).size, 8);
         for (const id of ids) assert.ok(h.dom.window.document.getElementById(id!)?.textContent);
     } finally { await leaf.view.onClose(); await h.close(); }
 });
@@ -459,8 +696,8 @@ test('Ctrl toggles selection and context menu deletes selected files once each',
         h.row('A/two.md').dispatchEvent(new h.dom.window.MouseEvent('click', { bubbles: true, ctrlKey: true }));
         assert.equal(h.app.workspace.opened.length, 1);
         h.row('A/two.md').dispatchEvent(new h.dom.window.MouseEvent('contextmenu', { bubbles: true }));
-        assert.match(Menu.last!.items[0].title, /删除所选项目 \(2\)/);
-        Menu.last!.items[0].action(); await settle();
+        const deletion = Menu.last!.items.find(item => /删除所选项目 \(2\)/.test(item.title))!;
+        deletion.action(); await settle();
         assert.deepEqual(h.app.fileManager.trashed, ['A/one.md', 'A/two.md']);
         assert.equal(Notice.messages.length, 0);
     } finally { await h.close(); }
@@ -473,11 +710,11 @@ test('selected folder and descendant are deleted once; cancel keeps both', async
         h.row('A/Sub/deep.md').dispatchEvent(new h.dom.window.MouseEvent('click', { bubbles: true, ctrlKey: true }));
         h.app.fileManager.allowDelete = false;
         h.row('A/Sub').dispatchEvent(new h.dom.window.MouseEvent('contextmenu', { bubbles: true }));
-        Menu.last!.items[0].action(); await settle();
+        Menu.last!.items.find(item => item.title.startsWith('删除所选项目'))!.action(); await settle();
         assert.ok(h.files.has('A/Sub/deep.md')); assert.equal(h.app.fileManager.trashed.length, 0);
         h.app.fileManager.allowDelete = true;
         h.row('A/Sub').dispatchEvent(new h.dom.window.MouseEvent('contextmenu', { bubbles: true }));
-        Menu.last!.items[0].action(); await settle();
+        Menu.last!.items.find(item => item.title.startsWith('删除所选项目'))!.action(); await settle();
         assert.deepEqual(h.app.fileManager.trashed, ['A/Sub']);
         assert.equal(Notice.messages.length, 0);
     } finally { await h.close(); }
@@ -487,7 +724,7 @@ test('settings definitions search both options and preserve their side effects',
     const h = await harness();
     try {
         const settings = h.plugin.settings[0] as any;
-        assert.deepEqual(settings.getSettingDefinitions().map((item: any) => item.name), ['界面语言', '自动显示当前文件']);
+        assert.deepEqual(settings.getSettingDefinitions().map((item: any) => item.name), ['界面语言', '自动显示当前文件', '显示子文件夹快捷栏']);
         settings.setControlValue('language', 'en');
         assert.equal(settings.getControlValue('language'), 'en');
         assert.equal(settings.updates, 1);

@@ -1,6 +1,10 @@
 import type { Language, SortOrder } from './model';
 
 const en = {
+    subfolders: 'Subfolders', showSubfolderBar: 'Show subfolder shortcuts',
+    showSubfolderBarDesc: 'Show a second row of draggable shortcuts for direct subfolders. Click the parent tab to return to its full contents.',
+    moveSelected: 'Move selected items', chooseFolder: 'Choose a destination folder',
+    moveProgress: 'Items moved',
     title: 'Folder Pin View', newNote: 'New note', newFolder: 'New folder',
     sort: 'Change sort order', autoReveal: 'Auto-reveal active file', expand: 'Expand all', collapse: 'Collapse all',
     pin: 'Pin folder', unpin: 'Unpin folder', rename: 'Rename', delete: 'Delete', deleteSelected: 'Delete selected',
@@ -22,6 +26,10 @@ const en = {
 };
 export type TextKey = keyof typeof en;
 const zh: Record<TextKey, string> = {
+    subfolders: '子文件夹切换', showSubfolderBar: '显示子文件夹快捷栏',
+    showSubfolderBarDesc: '显示可拖动排序的直接子文件夹快捷栏。点击第一排父文件夹，返回其完整内容。',
+    moveSelected: '移动所选项目', chooseFolder: '选择目标文件夹',
+    moveProgress: '已移动项目',
     title: '文件区', newNote: '新建笔记', newFolder: '新建文件夹',
     sort: '更改排序方式', autoReveal: '自动显示当前文件', expand: '全部展开', collapse: '全部折叠',
     pin: '固定文件夹', unpin: '取消固定', rename: '重命名', delete: '删除', deleteSelected: '删除所选项目',

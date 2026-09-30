@@ -80,10 +80,13 @@ export default class FolderPinPlugin extends Plugin {
         if (pinned) {
             if (index === -1) this.data.pinnedFolders.push(path);
             this.data.activeFolderPath = path;
+            this.data.activeSubfolderPath = null;
         } else {
             if (index === -1) return;
             this.data.pinnedFolders.splice(index, 1);
             delete this.data.zones[zoneKey(path)];
+            if (this.data.activeFolderPath === path)
+                this.data.activeSubfolderPath = null;
             if (this.data.activeFolderPath === path)
                 this.data.activeFolderPath = this.data.pinnedFolders[Math.min(index, this.data.pinnedFolders.length - 1)] ?? null;
         }
@@ -136,11 +139,14 @@ class FolderPinSettings extends PluginSettingTab {
                 } } },
             { name: this.plugin.t('autoReveal'), desc: this.plugin.t('autoRevealDesc'),
                 control: { type: 'toggle', key: 'autoReveal' } },
+            { name: this.plugin.t('showSubfolderBar'), desc: this.plugin.t('showSubfolderBarDesc'),
+                control: { type: 'toggle', key: 'showSubfolderBar' } },
         ];
     }
     getControlValue(key: string): unknown {
         if (key === 'language') return this.plugin.data.language;
         if (key === 'autoReveal') return this.plugin.data.autoReveal;
+        if (key === 'showSubfolderBar') return this.plugin.data.showSubfolderBar;
         return undefined;
     }
     setControlValue(key: string, value: unknown): void {
@@ -148,6 +154,12 @@ class FolderPinSettings extends PluginSettingTab {
             this.plugin.data.language = value === 'zh' || value === 'en' ? value : 'auto';
             this.plugin.refreshLanguage();
             this.update();
+        } else if (key === 'showSubfolderBar') {
+            this.plugin.views().forEach(view => view.captureScroll());
+            this.plugin.data.showSubfolderBar = value === true;
+            this.plugin.data.activeSubfolderPath = null;
+            this.plugin.persist();
+            this.plugin.refreshViews();
         } else if (key === 'autoReveal') {
             this.plugin.data.autoReveal = value === true;
             this.plugin.persist();
