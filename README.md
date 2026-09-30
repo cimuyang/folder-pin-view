@@ -10,11 +10,11 @@ Pin frequently used folders as sidebar tabs and switch between parent folders an
 
 ## 功能 / Features
 
-- **两层快捷栏：**第一排显示父目录完整内容，第二排切换到直接子文件夹；第二排默认开启，可在设置中关闭。
-- **自由排序：**两排标签均可拖动排序，子文件夹顺序按父目录分别保存。
-- **文件管理：**新建、重命名、删除、批量移动；支持 Ctrl/Cmd 多选、Shift 连选和拖动移动。
-- **浏览体验：**六种文件排序、键盘导航、可选自动定位，以及各目录独立的展开和滚动记忆。
-- **界面与同步：**中英双语、深浅主题适配，文件夹改名、移动或删除后自动更新。
+- **两层快捷栏**第一排显示父目录完整内容，第二排切换到直接子文件夹；第二排默认开启，可在设置中关闭。
+- **自由排序**两排标签均可拖动排序，子文件夹顺序按父目录分别保存。
+- **文件管理**新建、重命名、删除、批量移动；支持 Ctrl/Cmd 多选、Shift 连选和拖动移动。
+- **浏览体验**六种文件排序、键盘导航、可选自动定位，以及各目录独立的展开和滚动记忆。
+- **界面与同步**中英双语、深浅主题适配，文件夹改名、移动或删除后自动更新。
 
 - **Two shortcut rows:** Parent tabs show the full folder contents; child tabs open direct subfolders. The second row is enabled by default and can be disabled in settings.
 - **Custom tab order:** Drag either row to reorder tabs. Subfolder order is saved separately for each parent.
