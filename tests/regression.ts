@@ -8,6 +8,7 @@ import { createUntitled } from '../src/create';
 import { planMove } from '../src/move';
 import { createApp, FuzzySuggestModal, installDom, Menu, Notice, TFile } from './obsidian';
 import { MoveFolderModal } from '../src/move-picker';
+import { folderSearchQuery } from '../src/native';
 
 test('migrate legacy settings without losing pins, selection, sort or expansion', () => {
     const data = normalizeData({ pinnedFolders: ['A', 'B', 'A'], activeFolderPath: 'B', sortOrder: 'desc', expandedFolders: ['A/one', 'B/two'] });
@@ -118,7 +119,8 @@ const subtab = (h: Awaited<ReturnType<typeof harness>>, path: string): HTMLButto
 const childOrder = (h: Awaited<ReturnType<typeof harness>>) =>
     [...h.el.querySelectorAll<HTMLButtonElement>('.fpv-subfolder')].map(button => button.dataset.path);
 function selectPair(h: Awaited<ReturnType<typeof harness>>) {
-    for (const path of ['A/one.md', 'A/two.md']) h.row(path).dispatchEvent(new h.dom.window.MouseEvent('click', { bubbles: true, ctrlKey: true }));
+    h.view.toggleSelectionMode(true);
+    for (const path of ['A/one.md', 'A/two.md']) h.row(path).click();
 }
 function batchPicker(h: Awaited<ReturnType<typeof harness>>): MoveFolderModal {
     h.row('A/two.md').dispatchEvent(new h.dom.window.MouseEvent('contextmenu', { bubbles: true }));
@@ -290,6 +292,7 @@ test('file drag into second row moves files, while folder and descendant batch m
         assert.ok(h.row('A/Sub/one.md')); assert.ok(h.row('A/Sub/two.md'));
         assert.equal(h.plugin.data.activeSubfolderPath, 'A/Sub');
         h.pin('A').click(); h.row('A/Sub').click();
+        h.view.toggleSelectionMode(true); h.row('A/Sub').click();
         h.row('A/Sub/deep.md').dispatchEvent(new h.dom.window.MouseEvent('click', { bubbles: true, ctrlKey: true }));
         h.row('A/Sub').dispatchEvent(new h.dom.window.MouseEvent('contextmenu', { bubbles: true }));
         Menu.last!.items.find(item => item.title.startsWith('移动所选项目'))!.action();
@@ -360,8 +363,7 @@ function drag(h: Awaited<ReturnType<typeof harness>>, source: Element, target: E
 test('dragging a selected group onto a pinned tab moves both files and reveals them', async () => {
     const h = await harness();
     try {
-        h.row('A/one.md').dispatchEvent(new h.dom.window.MouseEvent('click', { bubbles: true, ctrlKey: true }));
-        h.row('A/two.md').dispatchEvent(new h.dom.window.MouseEvent('click', { bubbles: true, ctrlKey: true }));
+        selectPair(h);
         drag(h, h.row('A/one.md'), h.pin('B'));
         await settle();
         assert.ok(h.files.has('B/one.md')); assert.ok(h.files.has('B/two.md'));
@@ -374,6 +376,7 @@ test('dragging a folder moves descendants once and rejects cycles or collisions'
     const h = await harness();
     try {
         h.row('A/Sub').dispatchEvent(new h.dom.window.MouseEvent('click', { bubbles: true }));
+        h.view.toggleSelectionMode(true);
         h.row('A/Sub').dispatchEvent(new h.dom.window.MouseEvent('click', { bubbles: true, ctrlKey: true }));
         h.row('A/Sub/deep.md').dispatchEvent(new h.dom.window.MouseEvent('click', { bubbles: true, ctrlKey: true }));
         drag(h, h.row('A/Sub'), h.pin('B'));
@@ -595,7 +598,9 @@ test('six-option native menu records selection and Chinese context menus are tra
         h.tool(2).click(); assert.equal(Menu.last!.items.length, 6); assert.equal(Menu.last!.separators, 2);
         assert.equal(Menu.last!.items[0].checked, true); Menu.last!.items[2].action(); assert.equal(h.plugin.data.sortOrder, 'mtime-desc');
         h.row('A/Sub').dispatchEvent(new h.dom.window.MouseEvent('contextmenu', { bubbles: true }));
-        assert.deepEqual(Menu.last!.items.map(item => item.title), ['新建笔记', '新建文件夹', '固定文件夹', '重命名', '删除']);
+        const titles = Menu.last!.items.map(item => item.title);
+        for (const title of ['新建笔记', '新建文件夹', '固定文件夹', '新建白板', '新建数据库', '重命名', '删除', '多选模式'])
+            assert.equal(titles.filter(value => value === title).length, 1, title);
         h.plugin.data.language = 'en'; h.plugin.refreshLanguage(); assert.equal(h.tool(0).getAttribute('aria-label'), 'New note');
     } finally { await h.close(); }
 });
@@ -689,12 +694,11 @@ test('Shift selects the visible range without opening notes; plain click resets 
     } finally { await h.close(); }
 });
 
-test('Ctrl toggles selection and context menu deletes selected files once each', async () => {
+test('selection mode toggles items without opening and deletes selected files once each', async () => {
     const h = await harness();
     try {
-        h.row('A/one.md').click(); await settle();
-        h.row('A/two.md').dispatchEvent(new h.dom.window.MouseEvent('click', { bubbles: true, ctrlKey: true }));
-        assert.equal(h.app.workspace.opened.length, 1);
+        selectPair(h);
+        assert.equal(h.app.workspace.opened.length, 0);
         h.row('A/two.md').dispatchEvent(new h.dom.window.MouseEvent('contextmenu', { bubbles: true }));
         const deletion = Menu.last!.items.find(item => /删除所选项目 \(2\)/.test(item.title))!;
         deletion.action(); await settle();
@@ -707,6 +711,7 @@ test('selected folder and descendant are deleted once; cancel keeps both', async
     const h = await harness();
     try {
         h.row('A/Sub').click();
+        h.view.toggleSelectionMode(true); h.row('A/Sub').click();
         h.row('A/Sub/deep.md').dispatchEvent(new h.dom.window.MouseEvent('click', { bubbles: true, ctrlKey: true }));
         h.app.fileManager.allowDelete = false;
         h.row('A/Sub').dispatchEvent(new h.dom.window.MouseEvent('contextmenu', { bubbles: true }));
@@ -832,4 +837,159 @@ test('slow settings saves are serialized and the newest snapshot wins', async ()
         assert.equal(writes.length, 0); release(); await settle();
         assert.deepEqual(writes, ['zh', 'en']);
     } finally { await h.close(); }
+});
+
+test('Ctrl and Cmd clicks open separate new tabs; middle-click and ordinary click retain their meanings', async () => {
+    const h = await harness();
+    try {
+        h.row('A/one.md').dispatchEvent(new h.dom.window.MouseEvent('click', { bubbles: true, ctrlKey: true }));
+        h.row('A/two.md').dispatchEvent(new h.dom.window.MouseEvent('click', { bubbles: true, metaKey: true }));
+        h.row('A/one.md').dispatchEvent(new h.dom.window.MouseEvent('auxclick', { bubbles: true, button: 1 }));
+        h.row('A/two.md').click(); await settle();
+        assert.deepEqual(h.app.workspace.opened.map(entry => [entry.file.path, entry.mode]),
+            [['A/one.md', 'tab'], ['A/two.md', 'tab'], ['A/one.md', 'tab'], ['A/two.md', false]]);
+        assert.equal(h.row('A/one.md').getAttribute('aria-selected'), 'false');
+        assert.equal(h.row('A/two.md').getAttribute('aria-selected'), 'true');
+    } finally { await h.close(); }
+});
+
+test('right-click selection mode supports non-contiguous clicks, arrow navigation, folder expansion and Escape', async () => {
+    const h = await harness();
+    try {
+        h.el.querySelector('.fpv-tree')!.dispatchEvent(new h.dom.window.MouseEvent('contextmenu', { bubbles: true }));
+        Menu.last!.items.find(item => item.title === '多选模式')!.action();
+        h.row('A/one.md').click(); h.row('A/two.md').click(); h.row('A/one.md').click();
+        assert.equal(h.row('A/one.md').getAttribute('aria-selected'), 'false');
+        assert.equal(h.row('A/two.md').getAttribute('aria-selected'), 'true');
+        h.key(h.row('A/two.md'), 'ArrowUp');
+        assert.equal(h.row('A/two.md').getAttribute('aria-selected'), 'true');
+        h.row('A/Sub').querySelector<HTMLElement>('.fpv-arrow')!.click();
+        assert.ok(h.row('A/Sub/deep.md'));
+        assert.equal(h.app.workspace.opened.length, 0);
+        h.key(h.el.querySelector('.fpv-tree')!, 'Escape');
+        assert.equal(h.el.querySelector<HTMLElement>('.fpv-selection-bar')!.hidden, true);
+        h.row('A/two.md').click(); await settle();
+        assert.equal(h.app.workspace.opened.length, 1);
+    } finally { await h.close(); }
+});
+
+test('batch opening snapshots only files and skips files removed after the menu opens', async () => {
+    const h = await harness();
+    try {
+        selectPair(h);
+        h.row('A/two.md').dispatchEvent(new h.dom.window.MouseEvent('contextmenu', { bubbles: true }));
+        const open = Menu.last!.items.find(item => item.title.startsWith('在新标签页打开所选文件'))!;
+        h.view.toggleSelectionMode(false);
+        await h.app.fileManager.trashFile(h.files.get('A/two.md')!);
+        open.action(); await settle();
+        assert.deepEqual(h.app.workspace.opened.map(entry => [entry.file.path, entry.mode]), [['A/one.md', 'tab']]);
+    } finally { await h.close(); }
+});
+
+test('native creation menus use the current child folder, include root menus, and respect disabled core plugins', async () => {
+    const h = await harness();
+    try {
+        subtab(h, 'A/Sub').click();
+        const blank = () => h.el.querySelector('.fpv-tree')!.dispatchEvent(new h.dom.window.MouseEvent('contextmenu', { bubbles: true }));
+        blank(); Menu.last!.items.find(item => item.title === '新建白板')!.action(); await settle();
+        assert.ok(h.files.has('A/Sub/未命名.canvas'));
+        blank(); Menu.last!.items.find(item => item.title === '新建数据库')!.action(); await settle();
+        assert.ok(h.files.has('A/Sub/未命名.base'));
+        h.enabledCore.delete('canvas'); blank();
+        assert.equal(Menu.last!.items.some(item => item.title === '新建白板'), false);
+        assert.equal(Menu.last!.items.some(item => item.title === '新建数据库'), true);
+        h.plugin.data.pinnedFolders = []; h.plugin.data.activeFolderPath = null; h.plugin.refreshViews(); blank();
+        assert.equal(Menu.last!.items.some(item => item.title === '新建数据库'), true);
+    } finally { await h.close(); }
+});
+
+test('sixth toolbar button opens native search scoped to parent or child and does not follow subsequently opened files', async () => {
+    const h = await harness();
+    try {
+        assert.equal(h.el.querySelectorAll('.fpv-tool').length, 6);
+        h.tool(5).click(); await settle();
+        const search = h.app.workspace.getLeavesOfType('search')[0];
+        assert.equal(search.state.query, folderSearchQuery('A'));
+        const input = search.view.containerEl.querySelector<HTMLInputElement>('input')!;
+        assert.equal(h.dom.window.document.activeElement, input);
+        input.setRangeText('课堂 OR 作业', input.selectionStart!, input.selectionEnd!, 'end');
+        assert.equal(input.value, folderSearchQuery('A').replace('()', '(课堂 OR 作业)'));
+        subtab(h, 'A/Sub').click(); h.tool(5).click(); await settle();
+        assert.equal(h.app.workspace.getLeavesOfType('search').length, 1);
+        assert.equal(search.state.query, folderSearchQuery('A/Sub'));
+        await h.app.workspace.getLeaf(false).openFile(h.files.get('B/other.md') as TFile);
+        assert.equal(search.state.query, folderSearchQuery('A/Sub'));
+    } finally { await h.close(); }
+});
+
+test('folder search anchors literal special characters and excludes sibling and nested lookalike folders', () => {
+    for (const path of ['A', '课程/教学', '项目 [一]+(草稿).$#', '__proto__']) {
+        const query = folderSearchQuery(path);
+        const pattern = query.slice('path:/'.length, query.lastIndexOf('/'));
+        const matcher = new RegExp(pattern);
+        assert.equal(matcher.test(path + '/note.md'), true);
+        assert.equal(matcher.test(path + '/Sub/note.md'), true);
+        assert.equal(matcher.test(path + ' Archive/note.md'), false);
+        assert.equal(matcher.test('Other/' + path + '/note.md'), false);
+    }
+});
+
+test('search gives a useful disabled-core notice, reports open failures, and is disabled without a selected folder', async () => {
+    const h = await harness();
+    try {
+        h.enabledCore.delete('global-search'); h.tool(5).click(); await settle();
+        assert.equal(h.app.workspace.getLeavesOfType('search').length, 0);
+        assert.match(Notice.messages[0], /搜索.*核心插件/);
+        h.enabledCore.add('global-search');
+        h.app.workspace.ensureSideLeaf = async () => { throw new Error('Search failed'); };
+        h.tool(5).click(); await settle(); assert.match(Notice.messages.at(-1)!, /Search failed/);
+        h.plugin.data.pinnedFolders = []; h.plugin.data.activeFolderPath = null; h.plugin.refreshViews();
+        assert.equal(h.tool(5).disabled, true);
+    } finally { await h.close(); }
+});
+
+function startDrag(h: Awaited<ReturnType<typeof harness>>, path: string) {
+    const data = new Map<string, string>();
+    const transfer = { setData: (type: string, value: string) => data.set(type, value), effectAllowed: 'none' };
+    const event = new h.dom.window.Event('dragstart', { bubbles: true, cancelable: true });
+    Object.defineProperty(event, 'dataTransfer', { value: transfer });
+    h.row(path).dispatchEvent(event);
+    return { event, transfer, data };
+}
+
+test('native dragging exposes single and multiple files to editor/canvas targets without moving source files', async () => {
+    const h = await harness();
+    try {
+        const single = startDrag(h, 'A/one.md');
+        assert.equal(single.transfer.effectAllowed, 'all');
+        assert.equal(h.app.dragManager.draggable.type, 'file');
+        assert.equal(h.app.dragManager.draggable.file.path, 'A/one.md');
+        h.row('A/one.md').dispatchEvent(new h.dom.window.Event('dragend', { bubbles: true }));
+        assert.equal(h.app.dragManager.draggable, null);
+        selectPair(h); startDrag(h, 'A/one.md');
+        assert.deepEqual(h.app.dragManager.draggable.files.map((file: TFile) => file.path), ['A/one.md', 'A/two.md']);
+        assert.equal(h.app.fileManager.renamed.length, 0);
+        assert.ok(h.files.has('A/one.md')); assert.ok(h.files.has('A/two.md'));
+    } finally { await h.close(); }
+});
+
+test('drag cancellation cleans native state, and unavailable or throwing drag interfaces preserve files', async () => {
+    const h = await harness();
+    try {
+        startDrag(h, 'A/one.md'); await h.view.onClose();
+        assert.equal(h.app.dragManager.draggable, null);
+        assert.equal(h.el.querySelectorAll('.is-dragging').length, 0);
+    } finally { await h.close(); }
+    const other = await harness();
+    try {
+        const manager = other.app.dragManager;
+        (other.app as any).dragManager = undefined;
+        assert.equal(startDrag(other, 'A/one.md').transfer.effectAllowed, 'move');
+        assert.match(Notice.messages.at(-1)!, /原生文件拖放/);
+        other.app.dragManager = manager;
+        manager.onDragStart = function (_event: DragEvent, payload: any) { this.draggable = payload; throw new Error('Drag failed'); };
+        assert.equal(startDrag(other, 'A/one.md').event.defaultPrevented, true);
+        assert.equal(manager.draggable, null);
+        assert.ok(other.files.has('A/one.md'));
+    } finally { await other.close(); }
 });

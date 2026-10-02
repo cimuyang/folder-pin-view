@@ -1,8 +1,9 @@
-import { App, getLanguage, Notice, Plugin, PluginSettingTab, TFile, TFolder } from 'obsidian';
+import { App, getLanguage, Menu, Notice, Plugin, PluginSettingTab, TAbstractFile, TFile, TFolder } from 'obsidian';
 import type { SettingDefinitionItem } from 'obsidian';
 import { normalizeData, PluginData, remapData, removePath, zoneKey } from './model';
 import { resolveLanguage, TextKey, translate } from './i18n';
 import { FolderPinView, VIEW_TYPE } from './view';
+import { FILE_MENU_SOURCE } from './native';
 
 export default class FolderPinPlugin extends Plugin {
     data: PluginData = normalizeData(null);
@@ -11,6 +12,7 @@ export default class FolderPinPlugin extends Plugin {
     private writeQueue: Promise<void> = Promise.resolve();
     private stopping = false;
     private ribbon: HTMLElement | undefined;
+    private ownMenus = new WeakSet<Menu>();
     get language(): 'zh' | 'en' { return resolveLanguage(this.data.language, getLanguage()); }
     t = (key: TextKey): string => translate(this.language, key);
 
@@ -22,9 +24,12 @@ export default class FolderPinPlugin extends Plugin {
         this.addCommand({ id: 'reveal-active-file', name: this.t('reveal'), callback: () => {
             void this.activateView().then(() => this.views().forEach(view => view.revealActive()));
         } });
+        this.addCommand({ id: 'toggle-selection-mode', name: this.t('selectionMode'), callback: () => {
+            void this.activateView().then(() => this.views()[0]?.toggleSelectionMode());
+        } });
         this.addSettingTab(new FolderPinSettings(this.app, this));
         this.registerEvent(this.app.workspace.on('file-menu', (menu, file, source) => {
-            if (source === VIEW_TYPE || !(file instanceof TFolder) || file.isRoot()) return;
+            if (source === VIEW_TYPE || this.ownMenus.has(menu) || !(file instanceof TFolder) || file.isRoot()) return;
             const pinned = this.data.pinnedFolders.includes(file.path);
             menu.addItem(item => item.setTitle(this.t(pinned ? 'unpin' : 'pin')).setIcon('pin')
                 .onClick(() => { void this.setPinned(file.path, !pinned); }));
@@ -58,6 +63,10 @@ export default class FolderPinPlugin extends Plugin {
             if (!this.views().length) void this.activateView(false);
             this.persist();
         });
+    }
+    extendFileMenu(menu: Menu, file: TAbstractFile): void {
+        this.ownMenus.add(menu);
+        this.app.workspace.trigger('file-menu', menu, file, FILE_MENU_SOURCE);
     }
     views(): FolderPinView[] {
         return this.app.workspace.getLeavesOfType(VIEW_TYPE)

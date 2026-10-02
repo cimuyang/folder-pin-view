@@ -4,6 +4,7 @@
     flex-direction: column;
     height: 100%;
     min-height: 0;
+    container: fpv / inline-size;
     padding: 0;
     overflow: hidden;
 }
@@ -14,14 +15,18 @@
     justify-content: center;
     gap: 2px;
     padding: 6px 8px 4px;
+    flex-wrap: nowrap;
+    min-width: 0;
 }
 .fpv-root button.fpv-tool {
     --icon-size: var(--icon-m, 18px);
     display: inline-flex;
-    flex: 0 0 auto;
+    flex: 0 1 30px;
     align-items: center;
     justify-content: center;
     width: 30px;
+    min-width: 0;
+    box-sizing: border-box;
     height: 28px;
     padding: 5px;
     border: 0;
@@ -33,7 +38,30 @@
 }
 .fpv-root button.fpv-tool:hover { background: var(--background-modifier-hover); color: var(--icon-color-hover, var(--text-normal)); }
 .fpv-root button.fpv-tool.is-active { background: var(--background-modifier-active-hover); color: var(--text-normal); }
-.fpv-root .fpv-tool svg { width: var(--icon-size); height: var(--icon-size); stroke-width: var(--icon-stroke, 1.75px); }
+.fpv-root button.fpv-tool:disabled { opacity: 0.4; cursor: default; }
+.fpv-root .fpv-selection-bar {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 4px 10px;
+    font-size: var(--font-ui-small);
+    color: var(--text-muted);
+    border-bottom: 1px solid var(--background-modifier-border);
+}
+.fpv-root .fpv-selection-bar[hidden] { display: none; }
+.fpv-root .fpv-selection-bar button { padding: 2px 8px; height: auto; font-size: inherit; }
+.fpv-root .fpv-tool svg { width: var(--icon-size); height: var(--icon-size); max-width: 100%; flex-shrink: 1; stroke-width: var(--icon-stroke, 1.75px); }
+/* Keep all six actions visible as the sidebar narrows, without resize handlers. */
+@container fpv (max-width: 205px) {
+    .fpv-root .fpv-toolbar { gap: 1px; padding-inline: 4px; }
+    .fpv-root button.fpv-tool { padding-inline: 3px; }
+}
+@container fpv (max-width: 175px) {
+    .fpv-root .fpv-toolbar { gap: 0; padding-inline: 2px; }
+    .fpv-root button.fpv-tool { --icon-size: 16px; padding-inline: 2px; }
+}
 .fpv-root .fpv-bar {
     display: flex;
     flex: 0 0 auto;

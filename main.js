@@ -23,7 +23,7 @@ __export(main_exports, {
   default: () => FolderPinPlugin
 });
 module.exports = __toCommonJS(main_exports);
-var import_obsidian4 = require("obsidian");
+var import_obsidian5 = require("obsidian");
 
 // src/model.ts
 var SORT_ORDERS = ["name-asc", "name-desc", "mtime-desc", "mtime-asc", "ctime-desc", "ctime-asc"];
@@ -155,6 +155,14 @@ function revealScroll(scroll, viewport, start, width) {
 
 // src/i18n.ts
 var en = {
+  searchFolder: "Search current folder",
+  searchUnavailable: "Enable the Search core plugin to search this folder.",
+  searchNoFolder: "Select a folder to search.",
+  nativeDragUnavailable: "Native file dragging is unavailable in this Obsidian version.",
+  selectionMode: "Select multiple items",
+  selectionCount: "Selected",
+  selectionDone: "Done",
+  openSelected: "Open selected files in new tabs",
   subfolders: "Subfolders",
   showSubfolderBar: "Show subfolder shortcuts",
   showSubfolderBarDesc: "Show a second row of draggable shortcuts for direct subfolders. Click the parent tab to return to its full contents.",
@@ -202,6 +210,14 @@ var en = {
   "ctime-asc": "Created time (old to new)"
 };
 var zh = {
+  searchFolder: "\u641C\u7D22\u5F53\u524D\u6587\u4EF6\u5939",
+  searchUnavailable: "\u8BF7\u542F\u7528\u201C\u641C\u7D22\u201D\u6838\u5FC3\u63D2\u4EF6\u540E\u641C\u7D22\u6B64\u6587\u4EF6\u5939\u3002",
+  searchNoFolder: "\u8BF7\u9009\u62E9\u8981\u641C\u7D22\u7684\u6587\u4EF6\u5939\u3002",
+  nativeDragUnavailable: "\u5F53\u524D Obsidian \u7248\u672C\u65E0\u6CD5\u4F7F\u7528\u539F\u751F\u6587\u4EF6\u62D6\u653E\u3002",
+  selectionMode: "\u591A\u9009\u6A21\u5F0F",
+  selectionCount: "\u5DF2\u9009",
+  selectionDone: "\u5B8C\u6210",
+  openSelected: "\u5728\u65B0\u6807\u7B7E\u9875\u6253\u5F00\u6240\u9009\u6587\u4EF6",
   subfolders: "\u5B50\u6587\u4EF6\u5939\u5207\u6362",
   showSubfolderBar: "\u663E\u793A\u5B50\u6587\u4EF6\u5939\u5FEB\u6377\u680F",
   showSubfolderBarDesc: "\u663E\u793A\u53EF\u62D6\u52A8\u6392\u5E8F\u7684\u76F4\u63A5\u5B50\u6587\u4EF6\u5939\u5FEB\u6377\u680F\u3002\u70B9\u51FB\u7B2C\u4E00\u6392\u7236\u6587\u4EF6\u5939\uFF0C\u8FD4\u56DE\u5176\u5B8C\u6574\u5185\u5BB9\u3002",
@@ -256,7 +272,7 @@ function translate(language, key) {
 }
 
 // src/view.ts
-var import_obsidian3 = require("obsidian");
+var import_obsidian4 = require("obsidian");
 
 // src/create.ts
 var reservations = /* @__PURE__ */ new WeakMap();
@@ -325,10 +341,49 @@ var MoveFolderModal = class extends import_obsidian2.FuzzySuggestModal {
   }
 };
 
+// src/native.ts
+var import_obsidian3 = require("obsidian");
+var FILE_MENU_SOURCE = "file-explorer-context-menu";
+function startNativeDrag(app, event, files, elements) {
+  var _a;
+  const manager = app.dragManager;
+  if (!event.dataTransfer || !files.length || !manager || typeof manager.onDragStart !== "function" || typeof manager.onDragEnd !== "function" || typeof manager.dragFiles !== "function" || typeof manager.dragFile !== "function" || typeof manager.dragFolder !== "function") return null;
+  const first = files[0];
+  const payload = files.length > 1 ? manager.dragFiles(event, files) : first instanceof import_obsidian3.TFile ? manager.dragFile(event, first) : manager.dragFolder(event, first);
+  if (!payload) return null;
+  try {
+    (_a = manager.updateSource) == null ? void 0 : _a.call(manager, elements, "is-being-dragged");
+    manager.onDragStart(event, payload);
+  } catch (error) {
+    if (manager.draggable === payload) manager.onDragEnd();
+    throw error;
+  }
+  return () => {
+    if (manager.draggable === payload) manager.onDragEnd();
+  };
+}
+function searchAvailable(app) {
+  const plugins = app.internalPlugins;
+  return !!plugins && typeof plugins.getEnabledPluginById === "function" && !!plugins.getEnabledPluginById("global-search");
+}
+function folderSearchQuery(path) {
+  const escaped = path.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&");
+  return `path:/^${escaped}\\// ()`;
+}
+async function openFolderSearch(app, path) {
+  const query = folderSearchQuery(path);
+  const leaf = await app.workspace.ensureSideLeaf("search", "left", { active: true, reveal: true, state: { query } });
+  const input = leaf.view.containerEl.querySelector(".search-row input");
+  if (input && input.value === query) {
+    input.focus();
+    input.setSelectionRange(query.length - 1, query.length - 1);
+  }
+}
+
 // src/view.ts
 var VIEW_TYPE = "folder-pin-view";
 var nextLabelId = 0;
-var FolderPinView = class extends import_obsidian3.ItemView {
+var FolderPinView = class extends import_obsidian4.ItemView {
   constructor(leaf, plugin) {
     super(leaf);
     this.plugin = plugin;
@@ -342,10 +397,12 @@ var FolderPinView = class extends import_obsidian3.ItemView {
     this.focusedPath = null;
     this.selectedPaths = /* @__PURE__ */ new Set();
     this.selectionAnchor = null;
+    this.selectionMode = false;
     this.renderedZone = null;
     this.lastActive = null;
     this.dragPath = null;
     this.fileDrag = null;
+    this.endNativeDrag = null;
     this.editor = null;
     this.creationId = 0;
     this.openingPath = null;
@@ -373,6 +430,10 @@ var FolderPinView = class extends import_obsidian3.ItemView {
     this.toolbar = this.contentEl.createDiv({ cls: "nav-header fpv-toolbar", attr: { role: "toolbar" } });
     this.pinBar = this.contentEl.createDiv({ cls: "fpv-bar", attr: { role: "tablist" } });
     this.subfolderBar = this.contentEl.createDiv({ cls: "fpv-bar fpv-subfolder-bar", attr: { role: "tablist" } });
+    this.selectionBar = this.contentEl.createDiv({ cls: "fpv-selection-bar", attr: { hidden: "" } });
+    this.selectionLabel = this.selectionBar.createSpan({ attr: { role: "status", "aria-live": "polite" } });
+    this.selectionDone = this.selectionBar.createEl("button", { attr: { type: "button" } });
+    this.selectionDone.addEventListener("click", () => this.toggleSelectionMode(false));
     this.tree = this.contentEl.createDiv({ cls: "fpv-tree", attr: { role: "tree", tabindex: "0" } });
     this.containerLabels = [];
     for (const [container, key] of [[this.toolbar, "title"], [this.pinBar, "regions"], [this.subfolderBar, "subfolders"], [this.tree, "files"]]) {
@@ -389,7 +450,10 @@ var FolderPinView = class extends import_obsidian3.ItemView {
     this.registerDomEvent(this.tree, "contextmenu", (event) => {
       if (event.target === this.tree || event.target.closest(".fpv-empty")) {
         event.preventDefault();
-        this.creationMenu(new import_obsidian3.Menu(), this.rootPath()).showAtMouseEvent(event);
+        const menu = this.creationMenu(new import_obsidian4.Menu(), this.rootPath());
+        const folder = this.rootFolder();
+        if (folder) this.plugin.extendFileMenu(menu, folder);
+        this.selectionMenu(menu).showAtMouseEvent(event);
       }
     });
     this.registerDomEvent(this.pinBar, "wheel", (event) => {
@@ -446,8 +510,8 @@ var FolderPinView = class extends import_obsidian3.ItemView {
   }
   tool(icon, key, handler) {
     const button = this.toolbar.createEl("button", { cls: "clickable-icon nav-action-button fpv-tool", attr: { type: "button" } });
-    (0, import_obsidian3.setIcon)(button, icon);
-    (0, import_obsidian3.setTooltip)(button, this.t(key));
+    (0, import_obsidian4.setIcon)(button, icon);
+    (0, import_obsidian4.setTooltip)(button, this.t(key));
     button.addEventListener("click", handler);
     return button;
   }
@@ -460,7 +524,7 @@ var FolderPinView = class extends import_obsidian3.ItemView {
       void this.startCreate(true, this.rootPath());
     });
     const sort = this.tool("arrow-up-narrow-wide", "sort", () => {
-      const menu = new import_obsidian3.Menu();
+      const menu = new import_obsidian4.Menu();
       SORT_ORDERS.forEach((order, index) => {
         if (index === 2 || index === 4) menu.addSeparator();
         menu.addItem((item) => item.setTitle(this.t(order)).setChecked(this.data.sortOrder === order).onClick(() => {
@@ -481,6 +545,9 @@ var FolderPinView = class extends import_obsidian3.ItemView {
       });
     });
     this.collapseButton = this.tool("chevrons-up-down", "expand", () => this.toggleAll());
+    this.searchButton = this.tool("search", "searchFolder", () => {
+      void this.searchFolder();
+    });
     this.updateToolbar();
   }
   updateToolbar() {
@@ -488,8 +555,45 @@ var FolderPinView = class extends import_obsidian3.ItemView {
     this.followButton.toggleClass("is-active", this.data.autoReveal);
     this.followButton.setAttribute("aria-pressed", String(this.data.autoReveal));
     const hasExpanded = getZone(this.data).expanded.length > 0;
-    (0, import_obsidian3.setIcon)(this.collapseButton, hasExpanded ? "chevrons-down-up" : "chevrons-up-down");
-    (0, import_obsidian3.setTooltip)(this.collapseButton, this.t(hasExpanded ? "collapse" : "expand"));
+    (0, import_obsidian4.setIcon)(this.collapseButton, hasExpanded ? "chevrons-down-up" : "chevrons-up-down");
+    (0, import_obsidian4.setTooltip)(this.collapseButton, this.t(hasExpanded ? "collapse" : "expand"));
+    const path = this.rootPath();
+    this.searchButton.disabled = !path || !this.rootFolder();
+    (0, import_obsidian4.setTooltip)(this.searchButton, path ? `${this.t("searchFolder")}: ${path}` : this.t("searchNoFolder"));
+    this.updateSelectionBar();
+  }
+  async searchFolder() {
+    const folder = this.rootFolder();
+    if (!folder || folder.isRoot()) {
+      new import_obsidian4.Notice(this.t("searchNoFolder"));
+      return;
+    }
+    if (!searchAvailable(this.app)) {
+      new import_obsidian4.Notice(this.t("searchUnavailable"));
+      return;
+    }
+    try {
+      await openFolderSearch(this.app, folder.path);
+    } catch (error) {
+      this.reportError(error);
+    }
+  }
+  toggleSelectionMode(enabled = !this.selectionMode) {
+    this.selectionMode = enabled;
+    this.selectedPaths.clear();
+    this.selectionAnchor = null;
+    this.updateSelection();
+    this.tree.focus({ preventScroll: true });
+  }
+  updateSelectionBar() {
+    if (!this.selectionBar) return;
+    this.selectionBar.hidden = !this.selectionMode && this.selectedPaths.size < 2;
+    this.selectionLabel.setText(`${this.selectionMode ? this.t("selectionMode") + " \xB7 " : ""}${this.t("selectionCount")} ${this.selectedPaths.size}`);
+    this.selectionDone.setText(this.t("selectionDone"));
+  }
+  selectionMenu(menu) {
+    menu.addSeparator();
+    return menu.addItem((item) => item.setTitle(this.t("selectionMode")).setIcon("list-checks").setChecked(this.selectionMode).onClick(() => this.toggleSelectionMode()));
   }
   rootPath() {
     var _a;
@@ -497,7 +601,7 @@ var FolderPinView = class extends import_obsidian3.ItemView {
   }
   rootFolder() {
     const root = this.rootPath() ? this.app.vault.getAbstractFileByPath(this.rootPath()) : this.app.vault.getRoot();
-    return root instanceof import_obsidian3.TFolder ? root : null;
+    return root instanceof import_obsidian4.TFolder ? root : null;
   }
   renderPins() {
     var _a;
@@ -513,11 +617,11 @@ var FolderPinView = class extends import_obsidian3.ItemView {
           text: path.split("/").pop() || path,
           attr: { type: "button", role: "tab", draggable: "true", "data-path": path, "aria-label": path }
         });
-        (0, import_obsidian3.setTooltip)(button, path);
+        (0, import_obsidian4.setTooltip)(button, path);
         button.addEventListener("click", () => this.selectRegion(path));
         button.addEventListener("contextmenu", (event) => {
           event.preventDefault();
-          new import_obsidian3.Menu().addItem((item) => item.setTitle(this.t("unpin")).setIcon("pin-off").onClick(() => {
+          new import_obsidian4.Menu().addItem((item) => item.setTitle(this.t("unpin")).setIcon("pin-off").onClick(() => {
             void this.plugin.setPinned(path, false);
           })).showAtMouseEvent(event);
         });
@@ -585,12 +689,13 @@ var FolderPinView = class extends import_obsidian3.ItemView {
   validateSubfolder() {
     var _a;
     const path = this.data.activeSubfolderPath;
-    if (path && (!this.data.showSubfolderBar || !this.data.activeFolderPath || !directChild(this.data.activeFolderPath, path) || !(this.app.vault.getAbstractFileByPath(path) instanceof import_obsidian3.TFolder))) {
+    if (path && (!this.data.showSubfolderBar || !this.data.activeFolderPath || !directChild(this.data.activeFolderPath, path) || !(this.app.vault.getAbstractFileByPath(path) instanceof import_obsidian4.TFolder))) {
       this.captureScroll();
       this.data.activeSubfolderPath = null;
       this.creationId++;
       if (!((_a = this.editor) == null ? void 0 : _a.busy)) this.cancelEditor();
       this.selectedPaths.clear();
+      this.selectionMode = false;
       this.selectionAnchor = null;
       this.focusedPath = null;
       this.plugin.persist();
@@ -600,7 +705,7 @@ var FolderPinView = class extends import_obsidian3.ItemView {
     var _a, _b, _c;
     const parent = this.data.activeFolderPath;
     const folder = parent ? this.app.vault.getAbstractFileByPath(parent) : null;
-    const children = folder instanceof import_obsidian3.TFolder ? folder.children.filter((file) => file instanceof import_obsidian3.TFolder) : [];
+    const children = folder instanceof import_obsidian4.TFolder ? folder.children.filter((file) => file instanceof import_obsidian4.TFolder) : [];
     const names = comparator("name-asc", this.plugin.language === "zh" ? "zh-CN" : "en");
     const paths2 = children.sort((a, b) => names({ name: a.name, folder: true }, { name: b.name, folder: true })).map((file) => file.path);
     const saved = parent ? (_a = this.data.subfolderOrders[zoneKey(parent)]) != null ? _a : [] : [];
@@ -620,7 +725,7 @@ var FolderPinView = class extends import_obsidian3.ItemView {
           text: path.split("/").pop(),
           attr: { type: "button", role: "tab", draggable: "true", "data-path": path }
         });
-        (0, import_obsidian3.setTooltip)(button, path);
+        (0, import_obsidian4.setTooltip)(button, path);
         button.addEventListener("click", () => this.selectSubfolder(path));
         button.addEventListener("keydown", (event) => {
           var _a2, _b2;
@@ -695,7 +800,7 @@ var FolderPinView = class extends import_obsidian3.ItemView {
   }
   selectSubfolder(path) {
     var _a;
-    if (((_a = this.editor) == null ? void 0 : _a.busy) || this.moving || !this.data.showSubfolderBar || !this.data.activeFolderPath || !directChild(this.data.activeFolderPath, path) || !(this.app.vault.getAbstractFileByPath(path) instanceof import_obsidian3.TFolder)) return;
+    if (((_a = this.editor) == null ? void 0 : _a.busy) || this.moving || !this.data.showSubfolderBar || !this.data.activeFolderPath || !directChild(this.data.activeFolderPath, path) || !(this.app.vault.getAbstractFileByPath(path) instanceof import_obsidian4.TFolder)) return;
     this.creationId++;
     this.captureScroll();
     this.cancelEditor();
@@ -703,6 +808,7 @@ var FolderPinView = class extends import_obsidian3.ItemView {
     this.focusedPath = null;
     this.selectedPaths.clear();
     this.selectionAnchor = null;
+    this.selectionMode = false;
     this.plugin.persist();
     this.plugin.refreshViews();
   }
@@ -749,6 +855,7 @@ var FolderPinView = class extends import_obsidian3.ItemView {
     this.data.activeSubfolderPath = null;
     this.focusedPath = null;
     this.selectedPaths.clear();
+    this.selectionMode = false;
     this.selectionAnchor = null;
     this.plugin.persist();
     this.plugin.refreshViews();
@@ -776,9 +883,9 @@ var FolderPinView = class extends import_obsidian3.ItemView {
       const compare = comparator(this.data.sortOrder, this.plugin.language === "zh" ? "zh-CN" : "en");
       const sortInfo = (file) => ({
         name: file.name,
-        folder: file instanceof import_obsidian3.TFolder,
-        mtime: file instanceof import_obsidian3.TFile ? file.stat.mtime : 0,
-        ctime: file instanceof import_obsidian3.TFile ? file.stat.ctime : 0
+        folder: file instanceof import_obsidian4.TFolder,
+        mtime: file instanceof import_obsidian4.TFile ? file.stat.mtime : 0,
+        ctime: file instanceof import_obsidian4.TFile ? file.stat.ctime : 0
       });
       const stack = [];
       const pushChildren = (folder, depth) => {
@@ -790,7 +897,7 @@ var FolderPinView = class extends import_obsidian3.ItemView {
       while (stack.length) {
         const { file, depth, index, count } = stack.pop();
         this.drawRow(file, depth, index, count, expanded.has(file.path));
-        if (file instanceof import_obsidian3.TFolder && expanded.has(file.path)) pushChildren(file, depth + 1);
+        if (file instanceof import_obsidian4.TFolder && expanded.has(file.path)) pushChildren(file, depth + 1);
       }
     }
     if (!this.visible.length) this.tree.createDiv({ cls: "fpv-empty", text: root ? this.t("empty") : this.t("missing") });
@@ -810,7 +917,7 @@ var FolderPinView = class extends import_obsidian3.ItemView {
     this.updateToolbar();
   }
   drawRow(file, depth, index, count, expanded) {
-    const folder = file instanceof import_obsidian3.TFolder;
+    const folder = file instanceof import_obsidian4.TFolder;
     const row = this.tree.createDiv({
       cls: "tree-item-self fpv-row" + (folder ? " fpv-folder" : " fpv-file"),
       attr: {
@@ -826,11 +933,18 @@ var FolderPinView = class extends import_obsidian3.ItemView {
     row.style.setProperty("--fpv-depth", String(depth));
     const arrow = row.createSpan({ cls: "fpv-arrow", attr: { "aria-hidden": "true" } });
     if (folder) {
-      (0, import_obsidian3.setIcon)(arrow, "chevron-right");
+      (0, import_obsidian4.setIcon)(arrow, "chevron-right");
       row.setAttribute("aria-expanded", String(expanded));
+      arrow.addEventListener("click", (event) => {
+        event.stopPropagation();
+        if (this.editor) return;
+        this.focusedPath = file.path;
+        row.focus({ preventScroll: true });
+        this.toggleFolder(file.path);
+      });
     }
-    row.createSpan({ cls: "fpv-name", text: file instanceof import_obsidian3.TFile && file.extension.toLowerCase() === "md" ? file.basename : file.name });
-    (0, import_obsidian3.setTooltip)(row, file.path);
+    row.createSpan({ cls: "fpv-name", text: file instanceof import_obsidian4.TFile && file.extension.toLowerCase() === "md" ? file.basename : file.name });
+    (0, import_obsidian4.setTooltip)(row, file.path);
     this.rows.set(file.path, row);
     this.visible.push(file);
     row.addEventListener("dragstart", (event) => {
@@ -843,10 +957,18 @@ var FolderPinView = class extends import_obsidian3.ItemView {
       this.fileDrag = this.selectedPaths.has(file.path) ? [...this.selectedPaths] : [file.path];
       event.dataTransfer.setData("application/x-folder-pin-view", file.path);
       event.dataTransfer.effectAllowed = "move";
-      this.fileDrag.forEach((path) => {
-        var _a;
-        return (_a = this.rows.get(path)) == null ? void 0 : _a.addClass("is-dragging");
-      });
+      const files = this.fileDrag.map((path) => this.app.vault.getAbstractFileByPath(path)).filter((entry) => entry !== null);
+      const elements = this.fileDrag.map((path) => this.rows.get(path)).filter((el) => !!el);
+      try {
+        this.endNativeDrag = startNativeDrag(this.app, event, files, elements);
+      } catch (error) {
+        this.clearFileDrag();
+        event.preventDefault();
+        this.reportError(error);
+        return;
+      }
+      if (!this.endNativeDrag) new import_obsidian4.Notice(this.t("nativeDragUnavailable"));
+      elements.forEach((el) => el.addClass("is-dragging"));
     });
     row.addEventListener("dragend", () => this.clearFileDrag());
     if (folder) this.attachMoveTarget(row, () => this.app.vault.getAbstractFileByPath(file.path));
@@ -862,19 +984,30 @@ var FolderPinView = class extends import_obsidian3.ItemView {
         row.focus({ preventScroll: true });
         return;
       }
-      if (event.ctrlKey || event.metaKey) {
+      if (this.selectionMode) {
         this.toggleSelection(file.path);
         row.focus({ preventScroll: true });
+        return;
+      }
+      if (event.ctrlKey || event.metaKey) {
+        if (file instanceof import_obsidian4.TFile) {
+          this.selectOnly(file.path);
+          void this.openFile(file, true);
+        } else {
+          this.selectionMode = true;
+          this.toggleSelection(file.path);
+          row.focus({ preventScroll: true });
+        }
         return;
       }
       this.selectOnly(file.path);
       if (folder) {
         row.focus({ preventScroll: true });
         this.toggleFolder(file.path);
-      } else if (file instanceof import_obsidian3.TFile) void this.openFile(file);
+      } else if (file instanceof import_obsidian4.TFile) void this.openFile(file);
     });
     row.addEventListener("auxclick", (event) => {
-      if (event.button === 1 && file instanceof import_obsidian3.TFile) {
+      if (event.button === 1 && file instanceof import_obsidian4.TFile) {
         event.preventDefault();
         void this.openFile(file, true);
       }
@@ -889,6 +1022,9 @@ var FolderPinView = class extends import_obsidian3.ItemView {
     });
   }
   clearFileDrag() {
+    var _a;
+    (_a = this.endNativeDrag) == null ? void 0 : _a.call(this);
+    this.endNativeDrag = null;
     this.fileDrag = null;
     this.contentEl.querySelectorAll(".fpv-drop-target, .fpv-drop-invalid, .fpv-row.is-dragging").forEach((el) => el.classList.remove("fpv-drop-target", "fpv-drop-invalid", "is-dragging"));
   }
@@ -897,7 +1033,7 @@ var FolderPinView = class extends import_obsidian3.ItemView {
       if (!this.fileDrag) return;
       event.preventDefault();
       const target = getTarget();
-      const plan = target instanceof import_obsidian3.TFolder ? planMove(this.app.vault, this.fileDrag, target) : null;
+      const plan = target instanceof import_obsidian4.TFolder ? planMove(this.app.vault, this.fileDrag, target) : null;
       element.toggleClass("fpv-drop-target", !!plan && !plan.error && plan.moves.length > 0);
       element.toggleClass("fpv-drop-invalid", !plan || !!plan.error);
       if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
@@ -913,7 +1049,7 @@ var FolderPinView = class extends import_obsidian3.ItemView {
       const paths2 = this.fileDrag;
       this.clearFileDrag();
       const target = getTarget();
-      if (!(target instanceof import_obsidian3.TFolder)) {
+      if (!(target instanceof import_obsidian4.TFolder)) {
         this.reportError(this.t("missing"));
         return;
       }
@@ -996,7 +1132,7 @@ var FolderPinView = class extends import_obsidian3.ItemView {
       const stack = root ? [...root.children] : [];
       while (stack.length) {
         const file = stack.pop();
-        if (file instanceof import_obsidian3.TFolder) {
+        if (file instanceof import_obsidian4.TFolder) {
           zone.expanded.push(file.path);
           for (const child of file.children) stack.push(child);
         }
@@ -1078,6 +1214,7 @@ var FolderPinView = class extends import_obsidian3.ItemView {
       row.toggleClass("is-selected", selected);
       row.setAttribute("aria-selected", String(selected));
     });
+    this.updateSelectionBar();
   }
   selectOnly(path) {
     this.selectedPaths = /* @__PURE__ */ new Set([path]);
@@ -1105,6 +1242,18 @@ var FolderPinView = class extends import_obsidian3.ItemView {
   onTreeKey(event) {
     var _a;
     if (this.editor || event.isComposing) return;
+    if (event.key === "Escape") {
+      event.preventDefault();
+      this.toggleSelectionMode(false);
+      return;
+    }
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "a") {
+      event.preventDefault();
+      this.selectionMode = true;
+      this.selectedPaths = new Set(this.visible.map((file2) => file2.path));
+      this.updateSelection();
+      return;
+    }
     const index = this.visible.findIndex((file2) => file2.path === this.focusedPath);
     const file = this.visible[index];
     if (!file) return;
@@ -1123,18 +1272,23 @@ var FolderPinView = class extends import_obsidian3.ItemView {
         target = this.visible[this.visible.length - 1];
         break;
       case "ArrowRight":
-        if (file instanceof import_obsidian3.TFolder) {
+        if (file instanceof import_obsidian4.TFolder) {
           if (!getZone(this.data).expanded.includes(file.path)) this.toggleFolder(file.path, true);
           else if (((_a = this.visible[index + 1]) == null ? void 0 : _a.parent) === file) target = this.visible[index + 1];
         }
         break;
       case "ArrowLeft":
-        if (file instanceof import_obsidian3.TFolder && getZone(this.data).expanded.includes(file.path)) this.toggleFolder(file.path, false);
+        if (file instanceof import_obsidian4.TFolder && getZone(this.data).expanded.includes(file.path)) this.toggleFolder(file.path, false);
         else if (file.parent && this.rows.has(file.parent.path)) target = file.parent;
         break;
       case "Enter":
-        if (file instanceof import_obsidian3.TFile) void this.openFile(file, event.ctrlKey || event.metaKey);
+        if (this.selectionMode && !(event.ctrlKey || event.metaKey)) this.toggleSelection(file.path);
+        else if (file instanceof import_obsidian4.TFile) void this.openFile(file, event.ctrlKey || event.metaKey);
         else this.toggleFolder(file.path);
+        break;
+      case " ":
+        if (this.selectionMode) this.toggleSelection(file.path);
+        else return;
         break;
       case "F2":
         this.startRename(file);
@@ -1152,7 +1306,7 @@ var FolderPinView = class extends import_obsidian3.ItemView {
     event.preventDefault();
     if (target) {
       if (event.shiftKey) this.selectRange(target.path, event.ctrlKey || event.metaKey);
-      else this.selectOnly(target.path);
+      else if (!this.selectionMode) this.selectOnly(target.path);
       this.focusRow(target.path);
     }
   }
@@ -1177,10 +1331,14 @@ var FolderPinView = class extends import_obsidian3.ItemView {
     }));
   }
   fileMenu(file) {
-    const menu = new import_obsidian3.Menu();
+    const menu = new import_obsidian4.Menu();
     const selected = this.selectedPaths.size > 1 && this.selectedPaths.has(file.path);
     if (selected) {
       const paths2 = [...this.selectedPaths];
+      const filePaths = paths2.filter((path) => this.app.vault.getAbstractFileByPath(path) instanceof import_obsidian4.TFile);
+      if (filePaths.length) menu.addItem((item) => item.setTitle(`${this.t("openSelected")} (${filePaths.length})`).setIcon("files").onClick(() => {
+        void this.openSelected(filePaths);
+      }));
       menu.addItem((item) => item.setTitle(this.t("moveSelected") + ` (${paths2.length})\u2026`).setIcon("folder-input").onClick(() => {
         new MoveFolderModal(
           this.app,
@@ -1196,16 +1354,16 @@ var FolderPinView = class extends import_obsidian3.ItemView {
         void this.deleteSelected(paths2);
       }));
       const files = paths2.map((path) => this.app.vault.getAbstractFileByPath(path)).filter((item) => item !== null);
-      this.app.workspace.trigger("files-menu", menu, files, VIEW_TYPE, this.leaf);
-      return menu;
+      this.app.workspace.trigger("files-menu", menu, files, FILE_MENU_SOURCE);
+      return this.selectionMenu(menu);
     }
-    if (file instanceof import_obsidian3.TFolder) {
+    if (file instanceof import_obsidian4.TFolder) {
       this.creationMenu(menu, file.path);
       const pinned = this.data.pinnedFolders.includes(file.path);
       menu.addItem((item) => item.setTitle(this.t(pinned ? "unpin" : "pin")).setIcon(pinned ? "pin-off" : "pin").onClick(() => {
         void this.plugin.setPinned(file.path, !pinned);
       }));
-    } else if (file instanceof import_obsidian3.TFile) {
+    } else if (file instanceof import_obsidian4.TFile) {
       menu.addItem((item) => item.setTitle(this.t("openTab")).setIcon("file-plus").onClick(() => {
         void this.openFile(file, true);
       }));
@@ -1215,8 +1373,14 @@ var FolderPinView = class extends import_obsidian3.ItemView {
     menu.addItem((item) => item.setTitle(this.t("delete")).setIcon("trash-2").setWarning(true).onClick(() => {
       void this.deleteFile(file);
     }));
-    this.app.workspace.trigger("file-menu", menu, file, VIEW_TYPE, this.leaf);
-    return menu;
+    this.plugin.extendFileMenu(menu, file);
+    return this.selectionMenu(menu);
+  }
+  async openSelected(paths2) {
+    for (const path of paths2) {
+      const file = this.app.vault.getAbstractFileByPath(path);
+      if (file instanceof import_obsidian4.TFile) await this.openFile(file, true);
+    }
   }
   async deleteFile(file) {
     if (this.deletingPaths.has(file.path)) return;
@@ -1238,7 +1402,7 @@ var FolderPinView = class extends import_obsidian3.ItemView {
     }
   }
   reportError(error) {
-    new import_obsidian3.Notice(this.t("operationFailed") + ": " + (error instanceof Error ? error.message : String(error)));
+    new import_obsidian4.Notice(this.t("operationFailed") + ": " + (error instanceof Error ? error.message : String(error)));
   }
   async startCreate(folder, parentPath) {
     var _a;
@@ -1246,7 +1410,7 @@ var FolderPinView = class extends import_obsidian3.ItemView {
     this.cancelEditor();
     this.renderTree();
     const parent = !parentPath || parentPath === "/" ? this.app.vault.getRoot() : this.app.vault.getAbstractFileByPath(parentPath);
-    if (!(parent instanceof import_obsidian3.TFolder)) {
+    if (!(parent instanceof import_obsidian4.TFolder)) {
       this.reportError(this.t("missing"));
       return;
     }
@@ -1264,7 +1428,7 @@ var FolderPinView = class extends import_obsidian3.ItemView {
       const row = this.rows.get(created.path);
       if (row) this.revealRow(row);
       this.plugin.persist();
-      if (created instanceof import_obsidian3.TFile) {
+      if (created instanceof import_obsidian4.TFile) {
         const leaf = this.app.workspace.getLeaf(false);
         this.openingPath = created.path;
         try {
@@ -1296,11 +1460,11 @@ var FolderPinView = class extends import_obsidian3.ItemView {
     host.style.setProperty("--fpv-depth", row.style.getPropertyValue("--fpv-depth"));
     row.after(host);
     row.hidden = true;
-    const initial = file instanceof import_obsidian3.TFile && file.extension ? file.basename : file.name;
+    const initial = file instanceof import_obsidian4.TFile && file.extension ? file.basename : file.name;
     this.beginEditor(host, initial, async (value) => {
       var _a2, _b;
       if (this.app.vault.getAbstractFileByPath(file.path) !== file) throw new Error(this.t("missing"));
-      const path = entryPath((_b = (_a2 = file.parent) == null ? void 0 : _a2.path) != null ? _b : "", value, file instanceof import_obsidian3.TFile ? file.extension : "");
+      const path = entryPath((_b = (_a2 = file.parent) == null ? void 0 : _a2.path) != null ? _b : "", value, file instanceof import_obsidian4.TFile ? file.extension : "");
       if (path === file.path) return;
       const existing = this.app.vault.getAbstractFileByPath(path);
       if (existing && existing !== file) throw new Error(this.t("exists"));
@@ -1386,12 +1550,13 @@ var FolderPinView = class extends import_obsidian3.ItemView {
 };
 
 // src/main.ts
-var FolderPinPlugin = class extends import_obsidian4.Plugin {
+var FolderPinPlugin = class extends import_obsidian5.Plugin {
   constructor() {
     super(...arguments);
     this.data = normalizeData(null);
     this.writeQueue = Promise.resolve();
     this.stopping = false;
+    this.ownMenus = /* @__PURE__ */ new WeakSet();
     this.t = (key) => translate(this.language, key);
     this.persist = () => {
       if (this.stopping) return;
@@ -1403,7 +1568,7 @@ var FolderPinPlugin = class extends import_obsidian4.Plugin {
     };
   }
   get language() {
-    return resolveLanguage(this.data.language, (0, import_obsidian4.getLanguage)());
+    return resolveLanguage(this.data.language, (0, import_obsidian5.getLanguage)());
   }
   async onload() {
     this.data = normalizeData(await this.loadData());
@@ -1417,9 +1582,15 @@ var FolderPinPlugin = class extends import_obsidian4.Plugin {
     this.addCommand({ id: "reveal-active-file", name: this.t("reveal"), callback: () => {
       void this.activateView().then(() => this.views().forEach((view) => view.revealActive()));
     } });
+    this.addCommand({ id: "toggle-selection-mode", name: this.t("selectionMode"), callback: () => {
+      void this.activateView().then(() => {
+        var _a;
+        return (_a = this.views()[0]) == null ? void 0 : _a.toggleSelectionMode();
+      });
+    } });
     this.addSettingTab(new FolderPinSettings(this.app, this));
     this.registerEvent(this.app.workspace.on("file-menu", (menu, file, source) => {
-      if (source === VIEW_TYPE || !(file instanceof import_obsidian4.TFolder) || file.isRoot()) return;
+      if (source === VIEW_TYPE || this.ownMenus.has(menu) || !(file instanceof import_obsidian5.TFolder) || file.isRoot()) return;
       const pinned = this.data.pinnedFolders.includes(file.path);
       menu.addItem((item) => item.setTitle(this.t(pinned ? "unpin" : "pin")).setIcon("pin").onClick(() => {
         void this.setPinned(file.path, !pinned);
@@ -1439,21 +1610,25 @@ var FolderPinPlugin = class extends import_obsidian4.Plugin {
       this.refreshViews();
     }));
     this.registerEvent(this.app.vault.on("modify", (file) => {
-      if (file instanceof import_obsidian4.TFile && this.data.sortOrder.startsWith("mtime")) this.scheduleRefresh();
+      if (file instanceof import_obsidian5.TFile && this.data.sortOrder.startsWith("mtime")) this.scheduleRefresh();
     }));
     this.registerEvent(this.app.workspace.on("file-open", () => this.views().forEach((view) => view.activeFileChanged())));
     this.registerEvent(this.app.workspace.on("active-leaf-change", () => this.views().forEach((view) => view.activeFileChanged())));
     this.app.workspace.onLayoutReady(() => {
       if (this.stopping) return;
       for (const path of [...this.data.pinnedFolders]) {
-        if (!(this.app.vault.getAbstractFileByPath(path) instanceof import_obsidian4.TFolder)) removePath(this.data, path);
+        if (!(this.app.vault.getAbstractFileByPath(path) instanceof import_obsidian5.TFolder)) removePath(this.data, path);
       }
       for (const zone of Object.values(this.data.zones))
-        zone.expanded = zone.expanded.filter((path) => this.app.vault.getAbstractFileByPath(path) instanceof import_obsidian4.TFolder);
+        zone.expanded = zone.expanded.filter((path) => this.app.vault.getAbstractFileByPath(path) instanceof import_obsidian5.TFolder);
       this.refreshViews();
       if (!this.views().length) void this.activateView(false);
       this.persist();
     });
+  }
+  extendFileMenu(menu, file) {
+    this.ownMenus.add(menu);
+    this.app.workspace.trigger("file-menu", menu, file, FILE_MENU_SOURCE);
   }
   views() {
     return this.app.workspace.getLeavesOfType(VIEW_TYPE).map((leaf) => leaf.view).filter((view) => view instanceof FolderPinView);
@@ -1470,7 +1645,7 @@ var FolderPinPlugin = class extends import_obsidian4.Plugin {
   }
   async setPinned(path, pinned) {
     var _a;
-    if (pinned && !(this.app.vault.getAbstractFileByPath(path) instanceof import_obsidian4.TFolder)) return;
+    if (pinned && !(this.app.vault.getAbstractFileByPath(path) instanceof import_obsidian5.TFolder)) return;
     this.views().forEach((view) => view.captureScroll());
     const index = this.data.pinnedFolders.indexOf(path);
     if (pinned) {
@@ -1515,7 +1690,7 @@ var FolderPinPlugin = class extends import_obsidian4.Plugin {
     const snapshot = JSON.parse(JSON.stringify(this.data));
     this.writeQueue = this.writeQueue.then(() => this.saveData(snapshot)).catch((error) => {
       console.error("[folder-pin-view] Settings save failed", error);
-      new import_obsidian4.Notice(this.t("saveFailed"));
+      new import_obsidian5.Notice(this.t("saveFailed"));
     });
   }
   onunload() {
@@ -1525,7 +1700,7 @@ var FolderPinPlugin = class extends import_obsidian4.Plugin {
     this.flushSave();
   }
 };
-var FolderPinSettings = class extends import_obsidian4.PluginSettingTab {
+var FolderPinSettings = class extends import_obsidian5.PluginSettingTab {
   constructor(app, plugin) {
     super(app, plugin);
     this.plugin = plugin;

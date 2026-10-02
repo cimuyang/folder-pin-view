@@ -184,6 +184,20 @@ export function createApp() {
             } };
             workspace.leaves.push(leaf); return leaf;
         },
+        ensureSideLeaf: async (type: string, _side: string, options: any) => {
+            if (!enabledCore.has('global-search') || type !== 'search') throw new Error('Search is unavailable');
+            let leaf = workspace.leaves.find(leaf => leaf.type === type);
+            if (!leaf) {
+                const containerEl = document.createElement('div');
+                containerEl.innerHTML = '<div class="search-row"><input type="search"></div>';
+                document.body.append(containerEl);
+                leaf = { type, view: { containerEl }, state: {}, getViewState() { return { type, state: this.state }; } };
+                workspace.leaves.push(leaf);
+            }
+            leaf.state = options.state;
+            leaf.view.containerEl.querySelector('input').value = options.state.query;
+            return leaf;
+        },
     });
     const manager = {
         allowDelete: true, renamed: [] as string[], trashed: [] as string[],
@@ -216,6 +230,25 @@ export function createApp() {
             vault.trigger('rename', file, old);
         },
     };
-    const app = { vault, workspace, fileManager: manager };
-    return { app, add, files };
+    const enabledCore = new Set(['global-search', 'canvas', 'bases']);
+    const dragManager = {
+        draggable: null as any,
+        dragFile: (_event: DragEvent, file: TFile) => ({ type: 'file', file }),
+        dragFolder: (_event: DragEvent, file: TFolder) => ({ type: 'folder', file }),
+        dragFiles: (_event: DragEvent, files: TAbstractFile[]) => ({ type: 'files', files }),
+        onDragStart(event: DragEvent, payload: any) { this.draggable = payload; event.dataTransfer!.effectAllowed = 'all'; },
+        onDragEnd() { this.draggable = null; },
+    };
+    workspace.on('file-menu', (menu: Menu, file: TAbstractFile, source: string) => {
+        if (source !== 'file-explorer-context-menu' || !(file instanceof TFolder)) return;
+        for (const [id, title, extension] of [['canvas', '新建白板', 'canvas'], ['bases', '新建数据库', 'base']]) {
+            if (enabledCore.has(id)) menu.addItem(item => item.setTitle(title).onClick(async () => {
+                const path = (file.isRoot() ? '' : file.path + '/') + '未命名.' + extension;
+                await workspace.getLeaf(false).openFile(add(path) as TFile, { eState: { rename: 'all' } });
+            }));
+        }
+    });
+    const app = { vault, workspace, fileManager: manager, dragManager,
+        internalPlugins: { getEnabledPluginById: (id: string) => enabledCore.has(id) ? {} : null } };
+    return { app, add, files, enabledCore };
 }
