@@ -1,12 +1,16 @@
 import type { Language, SortOrder } from './model';
 
 const en = {
+    layout: 'Folder layout', layoutDesc: 'Arrange folder shortcuts in horizontal rows or two vertical columns above the note list.',
+    horizontal: 'Horizontal rows', vertical: 'Vertical columns', toggleLayout: 'Toggle folder layout',
+    noSubfolders: 'No subfolders',
+    resizeNavigation: 'Resize folder area', resizeNavigationHint: 'Drag to resize · Arrow keys to adjust · Double-click to reset',
     searchFolder: 'Search current folder', searchUnavailable: 'Enable the Search core plugin to search this folder.',
     searchNoFolder: 'Select a folder to search.', nativeDragUnavailable: 'Native file dragging is unavailable in this Obsidian version.',
     selectionMode: 'Select multiple items', selectionCount: 'Selected', selectionDone: 'Done',
     openSelected: 'Open selected files in new tabs',
     subfolders: 'Subfolders', showSubfolderBar: 'Show subfolder shortcuts',
-    showSubfolderBarDesc: 'Show a second row of draggable shortcuts for direct subfolders. Click the parent tab to return to its full contents.',
+    showSubfolderBarDesc: 'Show draggable shortcuts for direct subfolders. Click the parent folder to return to its full contents.',
     moveSelected: 'Move selected items', chooseFolder: 'Choose a destination folder',
     moveProgress: 'Items moved',
     title: 'Folder Pin View', newNote: 'New note', newFolder: 'New folder',
@@ -30,12 +34,16 @@ const en = {
 };
 export type TextKey = keyof typeof en;
 const zh: Record<TextKey, string> = {
+    layout: '文件夹布局', layoutDesc: '将文件夹快捷入口排列为横向两排，或笔记列表上方的竖向两列。',
+    horizontal: '横版（两排）', vertical: '竖版（两列）', toggleLayout: '切换文件夹布局',
+    noSubfolders: '暂无子文件夹',
+    resizeNavigation: '调整文件夹区域高度', resizeNavigationHint: '拖动调整 · 方向键微调 · 双击恢复默认',
     searchFolder: '搜索当前文件夹', searchUnavailable: '请启用“搜索”核心插件后搜索此文件夹。',
     searchNoFolder: '请选择要搜索的文件夹。', nativeDragUnavailable: '当前 Obsidian 版本无法使用原生文件拖放。',
     selectionMode: '多选模式', selectionCount: '已选', selectionDone: '完成',
     openSelected: '在新标签页打开所选文件',
     subfolders: '子文件夹切换', showSubfolderBar: '显示子文件夹快捷栏',
-    showSubfolderBarDesc: '显示可拖动排序的直接子文件夹快捷栏。点击第一排父文件夹，返回其完整内容。',
+    showSubfolderBarDesc: '显示可拖动排序的直接子文件夹入口。点击母文件夹，返回其完整内容。',
     moveSelected: '移动所选项目', chooseFolder: '选择目标文件夹',
     moveProgress: '已移动项目',
     title: '文件区', newNote: '新建笔记', newFolder: '新建文件夹',

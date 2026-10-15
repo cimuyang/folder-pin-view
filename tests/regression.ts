@@ -8,7 +8,7 @@ import { createUntitled } from '../src/create';
 import { planMove } from '../src/move';
 import { createApp, FuzzySuggestModal, installDom, Menu, Notice, TFile } from './obsidian';
 import { MoveFolderModal } from '../src/move-picker';
-import { folderSearchQuery } from '../src/native';
+import { folderSearchQuery, nativeDragPaths } from '../src/native';
 
 test('migrate legacy settings without losing pins, selection, sort or expansion', () => {
     const data = normalizeData({ pinnedFolders: ['A', 'B', 'A'], activeFolderPath: 'B', sortOrder: 'desc', expandedFolders: ['A/one', 'B/two'] });
@@ -729,7 +729,7 @@ test('settings definitions search both options and preserve their side effects',
     const h = await harness();
     try {
         const settings = h.plugin.settings[0] as any;
-        assert.deepEqual(settings.getSettingDefinitions().map((item: any) => item.name), ['界面语言', '自动显示当前文件', '显示子文件夹快捷栏']);
+        assert.deepEqual(settings.getSettingDefinitions().map((item: any) => item.name), ['界面语言', '自动显示当前文件', '显示子文件夹快捷栏', '文件夹布局']);
         settings.setControlValue('language', 'en');
         assert.equal(settings.getControlValue('language'), 'en');
         assert.equal(settings.updates, 1);
@@ -992,4 +992,245 @@ test('drag cancellation cleans native state, and unavailable or throwing drag in
         assert.equal(manager.draggable, null);
         assert.ok(other.files.has('A/one.md'));
     } finally { await other.close(); }
+});
+
+test('2.2.7 upgrades preserve legacy state and sanitize layout and height', () => {
+    const old = normalizeData({ version: 4, pinnedFolders: ['A'], activeSubfolderPath: 'A/Sub', subfolderOrders: { '@A': ['A/Sub'] } });
+    assert.equal(old.version, 5); assert.equal(old.layout, 'horizontal'); assert.equal(old.navigationHeight, 36);
+    assert.equal(old.activeSubfolderPath, 'A/Sub'); assert.deepEqual(old.subfolderOrders['@A'], ['A/Sub']);
+    for (const value of [NaN, Infinity, '40', null]) assert.equal(normalizeData({ navigationHeight: value }).navigationHeight, 36);
+    assert.equal(normalizeData({ layout: 'vertical', navigationHeight: 99 }).navigationHeight, 60);
+    assert.equal(normalizeData({ layout: 'vertical', navigationHeight: -5 }).navigationHeight, 20);
+    assert.equal(normalizeData({ layout: 'bogus' }).layout, 'horizontal');
+    assert.equal(normalizeData(JSON.parse(JSON.stringify({ ...old, layout: 'vertical', navigationHeight: 43 }))).layout, 'vertical');
+});
+
+test('layout switching preserves live tree, focus, selection, scroll, expansion and folder order', async () => {
+    const h = await harness({ activeSubfolderPath: 'A/Sub', subfolderOrders: { '@A': ['A/Sub'] } });
+    try {
+        const row = h.row('A/Sub/deep.md'), tree = h.el.querySelector<HTMLElement>('.fpv-tree')!;
+        h.view.toggleSelectionMode(true); row.click(); row.focus(); tree.scrollTop = 72;
+        const settings = h.plugin.settings[0] as any;
+        settings.setControlValue('layout', 'vertical');
+        assert.equal(settings.getControlValue('layout'), 'vertical');
+        assert.equal(h.el.classList.contains('fpv-vertical'), true);
+        assert.equal(h.row('A/Sub/deep.md'), row); assert.equal(h.dom.window.document.activeElement, row);
+        assert.equal(row.classList.contains('is-selected'), true); assert.equal(tree.scrollTop, 72);
+        assert.equal(h.plugin.data.activeSubfolderPath, 'A/Sub'); assert.deepEqual(childOrder(h), ['A/Sub']);
+        assert.equal(h.el.querySelector('.fpv-bar')!.getAttribute('aria-orientation'), 'vertical');
+        settings.setControlValue('layout', 'horizontal');
+        assert.equal(h.row('A/Sub/deep.md'), row); assert.equal(tree.scrollTop, 72);
+        assert.equal(h.el.querySelector<HTMLElement>('.fpv-separator')!.hidden, true);
+        assert.equal(h.el.querySelector('.fpv-bar')!.getAttribute('aria-orientation'), 'horizontal');
+    } finally { await h.close(); }
+});
+
+test('vertical empty child column and disabled shortcut setting keep parent and root views usable', async () => {
+    const h = await harness({ layout: 'vertical', activeFolderPath: 'C' });
+    try {
+        assert.equal(h.el.querySelector<HTMLElement>('.fpv-child-column')!.hidden, false);
+        assert.equal(h.el.querySelector<HTMLElement>('.fpv-child-empty')!.hidden, false);
+        assert.equal(h.el.querySelector<HTMLElement>('.fpv-subfolder-bar')!.hidden, true);
+        (h.plugin.settings[0] as any).setControlValue('showSubfolderBar', false);
+        assert.equal(h.el.querySelector<HTMLElement>('.fpv-child-column')!.hidden, true);
+        assert.ok(h.el.querySelector('.fpv-single-column'));
+        h.plugin.data.pinnedFolders = []; h.plugin.data.activeFolderPath = null; h.plugin.refreshViews();
+        assert.equal(h.el.querySelector<HTMLElement>('.fpv-navigation')!.hidden, true);
+        assert.equal(h.el.querySelector<HTMLElement>('.fpv-separator')!.hidden, true);
+        h.tool(0).click(); await settle(); assert.ok(h.files.has('未命名.md'));
+    } finally { await h.close(); }
+});
+
+test('vertical keyboard navigation follows rows and crosses columns without changing shortcut order', async () => {
+    const h = await harness({ layout: 'vertical' });
+    try {
+        h.key(h.pin('A'), 'ArrowDown'); assert.equal(h.plugin.data.activeFolderPath, 'B');
+        h.key(h.pin('B'), 'ArrowRight'); assert.equal(h.dom.window.document.activeElement, subtab(h, 'B/Deep'));
+        h.key(subtab(h, 'B/Deep'), 'ArrowLeft'); assert.equal(h.dom.window.document.activeElement, h.pin('B'));
+        h.key(h.pin('B'), 'ArrowUp'); assert.equal(h.plugin.data.activeFolderPath, 'A');
+        h.add('A/Zeta', true); h.view.renderTree();
+        h.key(subtab(h, 'A/Sub'), 'ArrowDown'); assert.equal(h.plugin.data.activeSubfolderPath, 'A/Zeta');
+        h.key(subtab(h, 'A/Zeta'), 'Escape'); assert.equal(h.plugin.data.activeSubfolderPath, null);
+        drag(h, h.pin('C'), h.pin('A')); assert.deepEqual(h.plugin.data.pinnedFolders, ['C', 'A', 'B']);
+        drag(h, subtab(h, 'A/Zeta'), subtab(h, 'A/Sub')); assert.deepEqual(childOrder(h), ['A/Zeta', 'A/Sub']);
+    } finally { await h.close(); }
+});
+
+function resizeFixture(h: Awaited<ReturnType<typeof harness>>) {
+    const separator = h.el.querySelector<HTMLElement>('.fpv-separator')!;
+    h.el.getBoundingClientRect = () => ({ height: 600 } as DOMRect);
+    let captured: number | null = null;
+    separator.setPointerCapture = id => { captured = id; };
+    separator.hasPointerCapture = id => captured === id;
+    separator.releasePointerCapture = () => { captured = null; separator.dispatchEvent(new h.dom.window.Event('lostpointercapture')); };
+    const pointer = (type: string, y: number, id = 7) => {
+        const event = new h.dom.window.MouseEvent(type, { bubbles: true, cancelable: true, clientY: y, button: 0 });
+        Object.defineProperty(event, 'pointerId', { value: id }); separator.dispatchEvent(event);
+    };
+    return { separator, pointer };
+}
+
+test('separator pointer and keyboard adjustments clamp, persist, and reset without rebuilding notes', async () => {
+    const h = await harness({ layout: 'vertical' });
+    try {
+        const { separator, pointer } = resizeFixture(h), row = h.row('A/one.md');
+        pointer('pointerdown', 200); pointer('pointermove', 260); assert.equal(h.plugin.data.navigationHeight, 46);
+        pointer('pointerup', 260); assert.equal(h.plugin.data.navigationHeight, 46);
+        assert.equal(h.el.classList.contains('fpv-resizing'), false); assert.equal(h.row('A/one.md'), row);
+        h.key(separator, 'End'); assert.equal(h.plugin.data.navigationHeight, 60);
+        h.key(separator, 'ArrowDown'); assert.equal(h.plugin.data.navigationHeight, 60);
+        h.key(separator, 'Home'); h.key(separator, 'ArrowUp'); assert.equal(h.plugin.data.navigationHeight, 20);
+        h.key(separator, 'ArrowDown', { shiftKey: true }); assert.equal(h.plugin.data.navigationHeight, 25);
+        separator.dispatchEvent(new h.dom.window.MouseEvent('dblclick')); assert.equal(h.plugin.data.navigationHeight, 36);
+        assert.equal(separator.getAttribute('aria-valuenow'), '36');
+        h.plugin.flushSave(); await settle();
+        const restored = normalizeData((h.plugin as any).saved);
+        assert.equal(restored.layout, 'vertical'); assert.equal(restored.navigationHeight, 36);
+    } finally { await h.close(); }
+});
+
+test('resize cancellation, Escape and switching layout restore the last committed size', async () => {
+    const h = await harness({ layout: 'vertical', navigationHeight: 40 });
+    try {
+        const { separator, pointer } = resizeFixture(h);
+        pointer('pointerdown', 200); pointer('pointermove', 260); pointer('pointercancel', 260);
+        assert.equal(h.plugin.data.navigationHeight, 40);
+        pointer('pointerdown', 200); pointer('pointermove', 500); h.key(separator, 'Escape');
+        assert.equal(h.plugin.data.navigationHeight, 40); assert.equal(h.el.classList.contains('fpv-resizing'), false);
+        pointer('pointerdown', 200); pointer('pointermove', 260); h.plugin.setLayout('horizontal');
+        assert.equal(h.plugin.data.navigationHeight, 40); assert.equal(separator.hidden, true);
+    } finally { await h.close(); }
+});
+
+test('layout and height changes synchronize open views without replacing either source tree', async () => {
+    const h = await harness();
+    const leaf = h.app.workspace.getLeftLeaf(true); await leaf.setViewState({ type: 'folder-pin-view' });
+    try {
+        const first = h.row('A/one.md'), second = leaf.view.contentEl.querySelector('.fpv-file');
+        h.plugin.setLayout('vertical');
+        for (const view of h.plugin.views()) assert.ok(view.contentEl.classList.contains('fpv-vertical'));
+        h.key(h.el.querySelector('.fpv-separator')!, 'End');
+        assert.equal(leaf.view.contentEl.style.getPropertyValue('--fpv-navigation-height'), '60%');
+        assert.equal(h.row('A/one.md'), first); assert.equal(leaf.view.contentEl.querySelector('.fpv-file'), second);
+    } finally { await leaf.view.onClose(); (leaf.view as any).cleanup.forEach((fn: any) => fn()); await h.close(); }
+});
+
+function dragEvent(h: Awaited<ReturnType<typeof harness>>, target: Element, type: string, extra: Record<string, unknown> = {}) {
+    const transfer = { dropEffect: 'none' };
+    const event = new h.dom.window.Event(type, { bubbles: true, cancelable: true });
+    Object.defineProperties(event, Object.fromEntries(Object.entries({ dataTransfer: transfer, ...extra }).map(([key, value]) => [key, { value }])));
+    target.dispatchEvent(event); return { event, transfer };
+}
+function hoverClock(h: Awaited<ReturnType<typeof harness>>) {
+    const timer = h.dom.window.setTimeout.bind(h.dom.window);
+    const clear = h.dom.window.clearTimeout.bind(h.dom.window);
+    const callbacks = new Map<number, () => void>(); let id = 100000;
+    h.dom.window.setTimeout = ((fn: () => void, delay: number, ...args: any[]) => {
+        if (delay === 550) { callbacks.set(++id, fn); return id; }
+        return timer(fn, delay, ...args);
+    }) as any;
+    h.dom.window.clearTimeout = (value: number | undefined) => { if (value) callbacks.delete(value); clear(value); };
+    return () => { for (const [key, fn] of [...callbacks]) { callbacks.delete(key); fn(); } };
+}
+
+test('hover previews another parent without detaching source or changing navigation, and child drop reveals the destination', async () => {
+    const h = await harness({ layout: 'vertical' });
+    try {
+        const advance = hoverClock(h), source = h.row('A/one.md');
+        selectPair(h); startDrag(h, 'A/one.md');
+        dragEvent(h, h.pin('B'), 'dragover'); advance();
+        assert.deepEqual(childOrder(h), ['B/Deep']); assert.equal(h.plugin.data.activeFolderPath, 'A');
+        assert.equal(h.row('A/one.md'), source); assert.equal(source.isConnected, true);
+        assert.equal(h.app.dragManager.draggable.type, 'files');
+        assert.equal(h.pin('B').classList.contains('is-drag-preview'), true);
+        assert.equal(dragEvent(h, subtab(h, 'B/Deep'), 'dragover').transfer.dropEffect, 'move');
+        dragEvent(h, subtab(h, 'B/Deep'), 'drop'); await settle();
+        assert.ok(h.files.has('B/Deep/one.md')); assert.ok(h.files.has('B/Deep/two.md'));
+        assert.equal(h.plugin.data.activeFolderPath, 'B'); assert.equal(h.plugin.data.activeSubfolderPath, 'B/Deep');
+        assert.ok(h.row('B/Deep/one.md')); assert.equal(h.el.querySelector('.is-drag-preview'), null);
+    } finally { await h.close(); }
+});
+
+test('leaving before hover delay cancels the preview and Escape restores shortcuts without moving files', async () => {
+    const h = await harness();
+    try {
+        const advance = hoverClock(h), source = h.row('A/one.md'); startDrag(h, 'A/one.md');
+        dragEvent(h, h.pin('B'), 'dragover'); dragEvent(h, h.pin('B'), 'dragleave'); advance();
+        assert.deepEqual(childOrder(h), ['A/Sub']);
+        dragEvent(h, h.pin('B'), 'dragover'); advance(); assert.deepEqual(childOrder(h), ['B/Deep']);
+        h.key(source, 'Escape');
+        assert.deepEqual(childOrder(h), ['A/Sub']); assert.equal(h.row('A/one.md'), source);
+        assert.equal(h.app.dragManager.draggable, null); assert.equal(h.app.fileManager.renamed.length, 0);
+        assert.equal(h.el.querySelector('.is-drag-preview'), null);
+    } finally { await h.close(); }
+});
+
+test('external drop and view closure cancel pending hover timers without moving files', async () => {
+    const h = await harness();
+    try {
+        const advance = hoverClock(h); startDrag(h, 'A/one.md');
+        dragEvent(h, h.pin('B'), 'dragover'); dragEvent(h, h.dom.window.document.body, 'drop'); advance();
+        assert.deepEqual(childOrder(h), ['A/Sub']); assert.equal(h.app.dragManager.draggable, null);
+        startDrag(h, 'A/one.md'); dragEvent(h, h.pin('B'), 'dragover'); await h.view.onClose(); advance();
+        assert.equal(h.app.fileManager.renamed.length, 0); assert.ok(h.files.has('A/one.md'));
+    } finally { await h.close(); }
+});
+
+test('native drag extraction rejects text, root, missing and foreign objects and accepts live vault files', async () => {
+    const h = await harness();
+    try {
+        const file = h.files.get('A/one.md');
+        for (const payload of [{ type: 'text', text: 'A/one.md' }, { type: 'file', file: { path: 'A/one.md' } },
+            { type: 'folder', file: h.app.vault.getRoot() }, { type: 'files', files: [file, new TFile('Gone.md')] },
+            { type: 'files', files: [] }, { type: 'file', file: new TFile('A/one.md') }]) {
+            h.app.dragManager.draggable = payload; assert.equal(nativeDragPaths(h.app as any), null);
+        }
+        h.app.dragManager.draggable = { type: 'files', files: [file, file, h.files.get('A/two.md')] };
+        assert.deepEqual(nativeDragPaths(h.app as any), ['A/one.md', 'A/two.md']);
+        h.app.dragManager.draggable = null;
+        const unsupported = dragEvent(h, h.pin('B'), 'dragover'); assert.equal(unsupported.event.defaultPrevented, false);
+    } finally { await h.close(); }
+});
+
+test('native explorer drops move notes in both layouts and reject whole batches on collision', async () => {
+    for (const layout of ['horizontal', 'vertical']) {
+        const h = await harness({ layout });
+        try {
+            h.app.dragManager.draggable = { type: 'file', file: h.files.get('A/one.md') };
+            assert.equal(dragEvent(h, h.pin('B'), 'dragover').transfer.dropEffect, 'move');
+            dragEvent(h, h.pin('B'), 'drop'); await settle(); assert.ok(h.files.has('B/one.md'));
+            h.add('A/one.md');
+            h.app.dragManager.draggable = { type: 'files', files: [h.files.get('A/one.md'), h.files.get('A/two.md')] };
+            assert.equal(dragEvent(h, h.pin('B'), 'dragover').transfer.dropEffect, 'none');
+            dragEvent(h, h.pin('B'), 'drop'); await settle();
+            assert.ok(h.files.has('A/one.md')); assert.ok(h.files.has('A/two.md')); assert.ok(!h.files.has('B/two.md'));
+            assert.match(Notice.messages.at(-1)!, /同名/);
+        } finally { await h.close(); }
+    }
+});
+
+test('a drag from a second FPV pane is accepted without converting pin sorting to folder movement', async () => {
+    const h = await harness({ layout: 'vertical' });
+    const leaf = h.app.workspace.getLeftLeaf(true); await leaf.setViewState({ type: 'folder-pin-view' });
+    try {
+        const source = leaf.view.contentEl.querySelector('[data-path="A/one.md"].fpv-row');
+        dragEvent(h, source, 'dragstart', { dataTransfer: { setData() {}, effectAllowed: 'none' } });
+        dragEvent(h, h.pin('B'), 'drop'); await settle();
+        assert.ok(h.files.has('B/one.md')); assert.equal(h.app.dragManager.draggable, null);
+        drag(h, h.pin('C'), h.pin('B'));
+        assert.deepEqual(h.plugin.data.pinnedFolders, ['A', 'C', 'B']); assert.ok(h.files.has('C'));
+    } finally { await leaf.view.onClose(); (leaf.view as any).cleanup.forEach((fn: any) => fn()); await h.close(); }
+});
+
+test('drag cursor distinguishes same-folder no-op from a valid move and cancellation removes highlights', async () => {
+    const h = await harness({ layout: 'vertical' });
+    try {
+        startDrag(h, 'A/one.md');
+        assert.equal(dragEvent(h, h.pin('A'), 'dragover').transfer.dropEffect, 'none');
+        assert.equal(dragEvent(h, h.pin('B'), 'dragover').transfer.dropEffect, 'move');
+        assert.ok(h.pin('B').classList.contains('fpv-drop-target'));
+        h.dom.window.dispatchEvent(new h.dom.window.Event('blur'));
+        assert.equal(h.el.querySelector('.fpv-drop-target'), null); assert.equal(h.app.dragManager.draggable, null);
+        assert.ok(h.files.has('A/one.md'));
+    } finally { await h.close(); }
 });

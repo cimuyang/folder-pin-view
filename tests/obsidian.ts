@@ -33,6 +33,7 @@ const icons: Record<string, string> = {
     'chevrons-up-down': '<path d="m7 8 5-5 5 5M7 16l5 5 5-5"/>',
     'chevrons-down-up': '<path d="m7 3 5 5 5-5M7 21l5-5 5 5"/>',
     'chevron-right': '<path d="m9 5 7 7-7 7"/>',
+    'search': '<circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/>',
 };
 export function setIcon(el: HTMLElement, icon: string): void {
     el.dataset.icon = icon;

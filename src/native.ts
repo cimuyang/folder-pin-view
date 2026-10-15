@@ -19,6 +19,20 @@ interface NativeApp {
 
 export const FILE_MENU_SOURCE = 'file-explorer-context-menu';
 
+// Only accept actual, still-present vault objects; text/plain and OS file drops
+// must never become vault moves. Also supports dragging from another FPV pane.
+export function nativeDragPaths(app: App): string[] | null {
+    const payload = (app as App & NativeApp).dragManager?.draggable as
+        { type?: string; file?: unknown; files?: unknown } | null | undefined;
+    if (!payload) return null;
+    const files = payload.type === 'files' && Array.isArray(payload.files) ? payload.files
+        : payload.type === 'file' || payload.type === 'folder' ? [payload.file] : [];
+    if (!files.length || !files.every((file): file is TAbstractFile =>
+        (file instanceof TFile || file instanceof TFolder) && !((file instanceof TFolder) && file.isRoot())
+        && app.vault.getAbstractFileByPath(file.path) === file)) return null;
+    return [...new Set(files.map(file => file.path))];
+}
+
 export function startNativeDrag(app: App, event: DragEvent, files: TAbstractFile[], elements: HTMLElement[]): (() => void) | null {
     const manager = (app as App & NativeApp).dragManager;
     if (!event.dataTransfer || !files.length || !manager || typeof manager.onDragStart !== 'function'

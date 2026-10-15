@@ -76,6 +76,70 @@
     --fpv-fade-end: #000;
     mask-image: linear-gradient(to right, var(--fpv-fade-start), #000 10px, #000 calc(100% - 10px), var(--fpv-fade-end));
 }
+.fpv-root .fpv-navigation { display: flex; flex: 0 0 auto; flex-direction: column; min-height: 0; min-width: 0; }
+.fpv-root .fpv-column { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.fpv-root .fpv-navigation[hidden], .fpv-root .fpv-column[hidden], .fpv-root .fpv-separator[hidden],
+.fpv-root .fpv-child-empty[hidden] { display: none; }
+.fpv-root .fpv-child-empty, .fpv-root .fpv-separator { display: none; }
+.fpv-root.fpv-vertical .fpv-navigation {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    flex: 0 0 var(--fpv-navigation-height, 36%);
+    max-height: 60%;
+    padding: 2px 6px 0;
+}
+.fpv-root.fpv-vertical .fpv-navigation[hidden] { display: none; }
+.fpv-root.fpv-vertical .fpv-navigation.fpv-single-column { grid-template-columns: minmax(0, 1fr); }
+.fpv-root.fpv-vertical .fpv-child-column { border-left: 1px solid var(--background-modifier-border); }
+.fpv-root.fpv-vertical .fpv-child-empty { display: block; padding: 6px 8px; color: var(--text-faint); font-size: var(--font-ui-small, 13px); }
+.fpv-root.fpv-vertical .fpv-child-empty[hidden] { display: none; }
+.fpv-root.fpv-vertical .fpv-bar {
+    flex: 1 1 0;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 2px;
+    min-height: 0;
+    padding: 2px 4px 5px;
+    margin: 0;
+    border: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+    mask-image: none;
+}
+.fpv-root.fpv-vertical .fpv-bar[hidden] { display: none; }
+.fpv-root.fpv-vertical .fpv-bar::-webkit-scrollbar { display: block; width: 3px; }
+.fpv-root.fpv-vertical .fpv-bar button.fpv-pin {
+    width: 100%;
+    max-width: 100%;
+    height: 29px;
+    padding: 4px 8px;
+    text-align: start;
+    font-size: var(--font-ui-small, 13px);
+}
+.fpv-root.fpv-vertical .fpv-bar button.fpv-pin.is-active { box-shadow: inset 2px 0 0 var(--interactive-accent); }
+.fpv-root .fpv-pin.is-drag-preview { background: var(--background-modifier-hover); }
+.fpv-root.fpv-vertical .fpv-separator {
+    display: flex;
+    flex: 0 0 9px;
+    align-items: center;
+    justify-content: center;
+    margin: 0 8px;
+    cursor: row-resize;
+    touch-action: none;
+    outline: none;
+}
+.fpv-root.fpv-vertical .fpv-separator[hidden] { display: none; }
+.fpv-root.fpv-vertical .fpv-separator::before {
+    content: '';
+    height: 1px;
+    width: 100%;
+    background: var(--background-modifier-border);
+}
+.fpv-root .fpv-separator:hover::before, .fpv-root .fpv-separator:focus-visible::before,
+.fpv-root.fpv-resizing .fpv-separator::before { background: var(--interactive-accent); height: 2px; }
+.fpv-root.fpv-resizing, .fpv-root.fpv-resizing * { cursor: row-resize; user-select: none; }
 .fpv-root .fpv-bar::-webkit-scrollbar { display: none; }
 .fpv-root .fpv-bar[hidden] { display: none; }
 .fpv-root .fpv-subfolder-bar {
@@ -167,4 +231,6 @@
     .fpv-root button.fpv-tool { width: 36px; height: 36px; }
     .fpv-root button.fpv-pin { height: 32px; }
     .fpv-root .fpv-row { min-height: 34px; }
+    .fpv-root.fpv-vertical .fpv-bar button.fpv-pin { height: 36px; }
+    .fpv-root.fpv-vertical .fpv-separator { flex-basis: 16px; }
 }

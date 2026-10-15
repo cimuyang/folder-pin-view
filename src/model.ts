@@ -3,11 +3,13 @@ export type SortOrder = typeof SORT_ORDERS[number];
 export type Language = 'auto' | 'zh' | 'en';
 export interface ZoneState { expanded: string[]; scrollTop: number }
 export interface PluginData {
-    version: 4;
+    version: 5;
     pinnedFolders: string[];
     activeFolderPath: string | null;
     activeSubfolderPath: string | null;
     showSubfolderBar: boolean;
+    layout: 'horizontal' | 'vertical';
+    navigationHeight: number;
     subfolderOrders: Record<string, string[]>;
     sortOrder: SortOrder;
     language: Language;
@@ -31,8 +33,11 @@ export function normalizeData(raw: unknown): PluginData {
     const sortOrder = SORT_ORDERS.includes(input.sortOrder as SortOrder) ? input.sortOrder as SortOrder
         : input.sortOrder === 'desc' ? 'name-desc' : 'name-asc';
     const data: PluginData = {
-        version: 4, pinnedFolders: pins, activeFolderPath: active, sortOrder,
+        version: 5, pinnedFolders: pins, activeFolderPath: active, sortOrder,
         activeSubfolderPath: null, showSubfolderBar: input.showSubfolderBar !== false,
+        layout: input.layout === 'vertical' ? 'vertical' : 'horizontal',
+        navigationHeight: typeof input.navigationHeight === 'number' && Number.isFinite(input.navigationHeight)
+            ? Math.max(20, Math.min(60, input.navigationHeight)) : 36,
         subfolderOrders: Object.create(null) as Record<string, string[]>,
         language: input.language === 'zh' || input.language === 'en' ? input.language : 'auto',
         autoReveal: input.autoReveal === true, zones: Object.create(null) as Record<string, ZoneState>,

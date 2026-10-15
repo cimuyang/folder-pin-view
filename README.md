@@ -1,71 +1,46 @@
 # Folder Pin View
 
-固定常用文件夹，快速切换父目录与子目录，专注当前内容。
+固定常用文件夹，快速切换目录、拖动整理笔记，让 Obsidian 文件管理更顺手。
 
-Pin your folders, switch between parent folders and subfolders, and focus on what matters.
+Pin your favorite folders, switch directories quickly, and organize notes with drag and drop in Obsidian.
 
-**版本 / Version:** 2.2.6 · **Obsidian:** 1.13.0+ · **许可 / License:** MIT
+**2.2.7** · Obsidian **1.13.0+** · [MIT](LICENSE)
 
-## 实际效果 / Screenshots
-
-| 原生文件列表 / Native explorer | 文件夹置顶视图 / Folder Pin View |
-| --- | --- |
-| <img src="assets/native-explorer.png" width="240" alt="Obsidian 原生文件列表 / Native file explorer"> | <img src="assets/folder-pin-view.png" width="240" alt="Folder Pin View 实际使用效果 / Plugin in use"> |
+![Folder Pin View — 横竖双视图与文件管理 / Two layouts and file management](assets/folder-pin-view-overview.png)
 
 ## 功能 / Features
 
 | 中文 | English |
 | --- | --- |
-| **两层快捷栏**：固定父目录，快速切换直接子目录；两排均可拖动排序。 | **Folder tabs:** Pin parents, switch to direct subfolders, and drag either row to reorder. |
-| **目录内搜索**：搜索当前目录及下级目录的内容，沿用原生搜索语法。 | **Folder search:** Search content in the current folder and its descendants using native syntax. |
-| **原生打开与拖放**：Ctrl/Cmd 或中键打开新标签页；拖到编辑器生成链接，拖到白板添加卡片。 | **Native opening & dragging:** Ctrl/Cmd-click or middle-click opens new tabs. Drop into an editor for links or a canvas for cards. |
-| **文件管理**：新建、重命名、删除、批量移动；右键接入白板、数据库等原生菜单。 | **File management:** Create, rename, delete and move items in batches, with native Canvas and Bases menus. |
-| **多选与导航**：独立多选模式、Shift 连选、键盘导航、六种排序、可选自动定位。 | **Selection & navigation:** Selection mode, Shift ranges, keyboard navigation, six sort modes and optional auto-reveal. |
-| **自适应界面**：窄侧栏工具栏保持单行；中英双语、主题适配、目录状态记忆。 | **Adaptive interface:** Single-row toolbar in narrow sidebars, Chinese/English, theme support and per-folder state. |
+| **固定与切换**：固定常用文件夹，快速浏览母目录和直接子目录，两级入口均可拖动排序。 | **Pin and navigate:** Keep favorite folders close, switch to direct subfolders, and reorder shortcuts. |
+| **横竖双视图**：横版两排或竖版两列；竖版独立滚动、高度可调。 | **Two layouts:** Horizontal rows or vertical columns, with independent scrolling and a resizable folder area. |
+| **拖动与批量管理**：拖动移动笔记，多选后批量打开、移动、删除，移动前检查冲突。 | **Drag and batch actions:** Move notes by dragging, or open, move, and delete selections with conflict checks. |
+| **目录内容搜索**：在当前文件夹及下级目录中搜索笔记内容。 | **Folder content search:** Search notes within the selected folder and its descendants. |
+| **原生操作**：Ctrl/Cmd 或中键打开新标签页；拖到编辑器生成链接，拖到白板添加卡片。 | **Native workflows:** Open new tabs with Ctrl/Cmd or middle-click; drop notes into editors for links or Canvas for cards. |
+| **浏览状态记忆**：六种排序、可选自动定位、独立展开与滚动状态，中英双语与主题适配。 | **Remember your view:** Six sort modes, optional auto-reveal, saved expansion and scroll, bilingual UI, and theme support. |
 
-## 安装与更新 / Install & Update
+## 安装与更新 / Install and update
 
 从 [Releases](https://github.com/cimuyang/folder-pin-view/releases) 下载并解压安装包，将 `main.js`、`manifest.json`、`styles.css` 放入笔记库的 `.obsidian/plugins/folder-pin-view/`，然后启用插件。
 
-Download and extract the package from [Releases](https://github.com/cimuyang/folder-pin-view/releases). Copy `main.js`, `manifest.json` and `styles.css` into your vault's `.obsidian/plugins/folder-pin-view/`, then enable the plugin.
+Download and extract the package from [Releases](https://github.com/cimuyang/folder-pin-view/releases). Copy `main.js`, `manifest.json`, and `styles.css` into `.obsidian/plugins/folder-pin-view/` in your vault, then enable the plugin.
 
-更新时先停用插件，替换上述三个文件，**保留 `data.json`**，再启用。
-
+更新时先停用插件，替换上述三个文件，**保留 `data.json`**，再启用。  
 To update, disable the plugin, replace the three files, **keep `data.json`**, then enable it again.
 
 ## 使用 / Usage
 
-1. 在原生文件列表中右键文件夹，选择“固定文件夹”。第一排浏览父目录，第二排切换子目录；第二排可在设置中关闭。  
-   Right-click a folder in the native explorer and choose **Pin folder**. Use the first row for parents and the second for subfolders; the second row is optional.
-2. 右键进入“多选模式”，点击选择项目；右键可批量打开、移动或删除。按 Esc 或点击“完成”退出；Shift 可连选。  
-   Enter **Select multiple items** from the context menu. Click to select, then right-click to open, move or delete the selection. Exit with Escape or **Done**; Shift selects a range.
-3. 点击工具栏第六个搜索按钮，在括号内输入关键词。范围为点击时选定的目录及下级目录；删除查询中的目录条件会恢复全库搜索。  
-   Click the sixth toolbar button and type inside the parentheses. Search covers the folder selected when clicked and its descendants; removing the path condition searches the whole vault.
-4. 拖到文件夹或标签可移动文件；拖到编辑器或白板可创建链接或卡片，保留源文件。  
-   Drop onto a folder or tab to move files. Drop into an editor or canvas to create links or cards while keeping the source files.
+1. 右键文件夹选择“固定文件夹”；点击母文件夹显示其完整内容，点击子文件夹仅浏览对应目录。两级入口均可拖动排序。  
+   Right-click a folder and choose **Pin folder**. Select a parent to browse all its contents or a child to browse that folder. Drag shortcuts to reorder them.
+2. 在“设置 → 文件区 → 文件夹布局”切换横版、竖版；也可运行“切换文件夹布局”命令。竖版分隔线可拖动调整，双击复位。  
+   Choose a layout in the plugin settings or run **Toggle folder layout**. Drag the vertical layout's separator to resize; double-click to reset.
+3. 右键进入“多选模式”，点击选择，Shift 连选；右键批量操作，Esc 退出。点击放大镜搜索当前目录，在查询括号内输入关键词。  
+   Enter **Select multiple items** from the context menu; click to select or Shift-click a range. Right-click for batch actions; Escape exits. Click the magnifier to search the current folder and type inside the query parentheses.
 
-目录搜索需要启用“搜索”核心插件；白板、数据库菜单随对应核心插件的启用状态变化。
+目录搜索需启用“搜索”核心插件；白板、数据库菜单取决于对应核心插件。  
+Folder search requires the Search core plugin. Canvas and Bases menus require their respective core plugins.
 
-Folder search requires the Search core plugin. Canvas and Bases menu items depend on their core plugins being enabled.
-
-**快捷键 / Shortcuts:** ↑↓ 导航 / Navigate · Enter 打开 / Open · F2 重命名 / Rename · Ctrl/Cmd+点击 / Click 新标签页 / New tab · Shift 连选 / Range · Esc 退出多选 / Exit selection · 多选模式下 / In selection mode: Ctrl/Cmd+A 全选可见项目 / Select visible items
-
-## 2.2.6 更新 / What's New in 2.2.6
-
-- **新标签页打开**：Ctrl/Cmd 点击与中键点击沿用原生习惯。  
-  **New tabs:** Ctrl/Cmd-click and middle-click follow native opening behavior.
-- **独立多选模式**：显示已选数量，支持批量打开、移动和删除。  
-  **Selection mode:** Selection count plus batch opening, moving and deletion.
-- **原生右键菜单**：空白处和文件夹支持新建白板、数据库及菜单扩展。  
-  **Native context menus:** Blank areas and folders support Canvas, Bases and menu integrations.
-- **编辑器与白板拖放**：支持单文件、多文件拖放，保留原有拖动移动。  
-  **Editor & canvas drops:** Drag single or multiple files, alongside existing drag-to-move.
-- **当前目录内容搜索**：新增第六个按钮，打开带目录条件的原生搜索。  
-  **Folder content search:** A sixth button opens native Search with a folder filter.
-- **窄侧栏适配**：自动收紧间距与按钮，六个操作保持单行。  
-  **Narrow sidebar support:** Spacing and buttons adapt to keep all six actions on one row.
-
-## 开发 / Development
+## 开发与验证 / Development and validation
 
 Node.js 24:
 
@@ -76,11 +51,80 @@ npm test
 npm run build
 ```
 
-`npm run dev` 监听源码变化。发布文件为 `main.js`、`manifest.json`、`styles.css`。  
-`npm run dev` watches source changes. Release files are `main.js`, `manifest.json` and `styles.css`.
+`npm run dev` 监听源码变化。可选浏览器检查：`node tests/browser-check.mjs`，需要 Playwright 和 Chromium；可设置 `FPV_PLAYWRIGHT_MODULE`、`FPV_BROWSER_EXECUTABLE` 使用已有安装。  
+`npm run dev` watches source changes. Optional browser QA: `node tests/browser-check.mjs` requires Playwright and Chromium; use `FPV_PLAYWRIGHT_MODULE` and `FPV_BROWSER_EXECUTABLE` for existing installations.
 
-## 隐私与许可 / Privacy & License
+类型检查、92 项回归测试、11 组浏览器检查及构建通过。浏览器预览使用演示数据；原生 Obsidian 桌面和手机触控仍待实测。  
+Type checking, 92 regression tests, 11 browser checks, and the build pass. Browser previews use demo data; native Obsidian desktop and mobile touch validation is still pending.
 
-插件不发送网络请求，不收集遥测数据；设置仅保存在笔记库的插件目录 `data.json` 中。[MIT License](LICENSE)。
+## 隐私 / Privacy
 
-The plugin makes no network requests and collects no telemetry. Settings stay in `data.json` in the vault's plugin directory. [MIT License](LICENSE).
+无网络请求，无遥测。设置仅保存在当前笔记库的插件目录 `data.json` 中。  
+No network requests or telemetry. Settings are stored only in the plugin's `data.json` within the current vault.
+
+## 更新记录 / Changelog
+
+历史条目整理自 [GitHub 发布说明 / GitHub Releases](https://github.com/cimuyang/folder-pin-view/releases)。
+
+### 2.2.7 · 待发布 / Unreleased
+
+- 新增竖版双列布局、独立滚动和高度调整；支持设置及命令切换，保留浏览状态。  
+  Added vertical columns with separate scrolling, a resizable folder area, and layout switching that retains browsing state.
+- 增强拖动移动：悬停预览子目录、边缘滚动、跨面板拖入及取消清理；精简栏目说明。  
+  Improved moves with hover previews, edge scrolling, cross-pane drops, and cancellation cleanup; removed column captions.
+
+### [2.2.6](https://github.com/cimuyang/folder-pin-view/releases/tag/2.2.6) · 2026-10-02
+
+- 新增原生新标签页操作、独立多选模式、右键菜单扩展及编辑器／白板拖放。  
+  Introduced native tab gestures, a dedicated selection mode, context-menu integrations, and editor/Canvas drops.
+- 新增当前目录内容搜索，优化窄侧栏六按钮工具栏。  
+  Added scoped content search and refined the six-button toolbar for narrow sidebars.
+
+### [2.2.5](https://github.com/cimuyang/folder-pin-view/releases/tag/2.2.5) · 2026-09-30
+
+- 新增可排序的子目录快捷栏，分别记忆母目录和子目录的浏览状态。  
+  Added reorderable subfolder shortcuts with separate browsing state for parent and child folders.
+- 修复右键批量移动，加入目标目录搜索，完善多窗口与异步操作同步。  
+  Fixed batch context-menu moves, added destination search, and improved synchronization across panes and pending operations.
+
+### [2.2.4](https://github.com/cimuyang/folder-pin-view/releases/tag/2.2.4) · 2026-09-25
+
+- 新增文件、文件夹及多选项目的拖动移动，检查重名和目录循环，沿用链接更新。  
+  Added drag moves for files, folders, and selections, with collision and cycle checks plus link-aware movement.
+- 最低版本调整为 Obsidian 1.13.0；统一官方依赖源并完善构建检查。  
+  Required Obsidian 1.13.0 and standardized dependency sources and build verification.
+
+### [2.2.3](https://github.com/cimuyang/folder-pin-view/releases/tag/2.2.3) · 2026-09-25
+
+- 修复重复删除，完善多选删除与父子项目去重。  
+  Fixed repeated deletion and improved selection deletion without processing descendants twice.
+- 改进新笔记标题编辑、中文输入法、弹出窗口和设置兼容性。  
+  Refined note-title editing, Chinese input, pop-out windows, and settings compatibility.
+
+### [2.2.2](https://github.com/cimuyang/folder-pin-view/releases/tag/2.2.2) · 2026-09-25
+
+- 优化新建与命名：即时打开笔记、侧栏命名文件夹、定位新项目；避免并发重名和异步抢焦点。  
+  Streamlined creation with immediate note opening, inline folder naming, item reveal, duplicate-name protection, and focus-safe completion.
+
+### [2.2.1](https://github.com/cimuyang/folder-pin-view/releases/tag/2.2.1) · 2026-09-24
+
+- 修复标签可见性和滚动复位；统一工具栏，加入六种排序、自动定位及独立浏览状态。  
+  Fixed tab visibility and scroll resets; unified tools and added six sorting options, auto-reveal, and per-folder state.
+- 完善双语界面、行内编辑、配置迁移及原生重命名／删除行为。  
+  Improved localization, inline editing, settings migration, and native rename/delete handling.
+
+### [2.2.0](https://github.com/cimuyang/folder-pin-view/releases/tag/2.2.0) · 2026-09-01
+
+未附更新说明。 / No release notes were provided.
+
+### [2.1.0](https://github.com/cimuyang/folder-pin-view/releases/tag/2.1.0) · 2026-09-01
+
+未附更新说明。 / No release notes were provided.
+
+### [2.0.0](https://github.com/cimuyang/folder-pin-view/releases/tag/2.0.0) · 2026-09-01
+
+未附更新说明。 / No release notes were provided.
+
+### [1.1.0](https://github.com/cimuyang/folder-pin-view/releases/tag/1.1.0) · 2026-09-01
+
+未附更新说明。 / No release notes were provided.

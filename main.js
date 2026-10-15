@@ -38,12 +38,14 @@ function normalizeData(raw) {
   const active = typeof input.activeFolderPath === "string" && pins.includes(input.activeFolderPath) ? input.activeFolderPath : (_a = pins[0]) != null ? _a : null;
   const sortOrder = SORT_ORDERS.includes(input.sortOrder) ? input.sortOrder : input.sortOrder === "desc" ? "name-desc" : "name-asc";
   const data = {
-    version: 4,
+    version: 5,
     pinnedFolders: pins,
     activeFolderPath: active,
     sortOrder,
     activeSubfolderPath: null,
     showSubfolderBar: input.showSubfolderBar !== false,
+    layout: input.layout === "vertical" ? "vertical" : "horizontal",
+    navigationHeight: typeof input.navigationHeight === "number" && Number.isFinite(input.navigationHeight) ? Math.max(20, Math.min(60, input.navigationHeight)) : 36,
     subfolderOrders: /* @__PURE__ */ Object.create(null),
     language: input.language === "zh" || input.language === "en" ? input.language : "auto",
     autoReveal: input.autoReveal === true,
@@ -155,6 +157,14 @@ function revealScroll(scroll, viewport, start, width) {
 
 // src/i18n.ts
 var en = {
+  layout: "Folder layout",
+  layoutDesc: "Arrange folder shortcuts in horizontal rows or two vertical columns above the note list.",
+  horizontal: "Horizontal rows",
+  vertical: "Vertical columns",
+  toggleLayout: "Toggle folder layout",
+  noSubfolders: "No subfolders",
+  resizeNavigation: "Resize folder area",
+  resizeNavigationHint: "Drag to resize \xB7 Arrow keys to adjust \xB7 Double-click to reset",
   searchFolder: "Search current folder",
   searchUnavailable: "Enable the Search core plugin to search this folder.",
   searchNoFolder: "Select a folder to search.",
@@ -165,7 +175,7 @@ var en = {
   openSelected: "Open selected files in new tabs",
   subfolders: "Subfolders",
   showSubfolderBar: "Show subfolder shortcuts",
-  showSubfolderBarDesc: "Show a second row of draggable shortcuts for direct subfolders. Click the parent tab to return to its full contents.",
+  showSubfolderBarDesc: "Show draggable shortcuts for direct subfolders. Click the parent folder to return to its full contents.",
   moveSelected: "Move selected items",
   chooseFolder: "Choose a destination folder",
   moveProgress: "Items moved",
@@ -210,6 +220,14 @@ var en = {
   "ctime-asc": "Created time (old to new)"
 };
 var zh = {
+  layout: "\u6587\u4EF6\u5939\u5E03\u5C40",
+  layoutDesc: "\u5C06\u6587\u4EF6\u5939\u5FEB\u6377\u5165\u53E3\u6392\u5217\u4E3A\u6A2A\u5411\u4E24\u6392\uFF0C\u6216\u7B14\u8BB0\u5217\u8868\u4E0A\u65B9\u7684\u7AD6\u5411\u4E24\u5217\u3002",
+  horizontal: "\u6A2A\u7248\uFF08\u4E24\u6392\uFF09",
+  vertical: "\u7AD6\u7248\uFF08\u4E24\u5217\uFF09",
+  toggleLayout: "\u5207\u6362\u6587\u4EF6\u5939\u5E03\u5C40",
+  noSubfolders: "\u6682\u65E0\u5B50\u6587\u4EF6\u5939",
+  resizeNavigation: "\u8C03\u6574\u6587\u4EF6\u5939\u533A\u57DF\u9AD8\u5EA6",
+  resizeNavigationHint: "\u62D6\u52A8\u8C03\u6574 \xB7 \u65B9\u5411\u952E\u5FAE\u8C03 \xB7 \u53CC\u51FB\u6062\u590D\u9ED8\u8BA4",
   searchFolder: "\u641C\u7D22\u5F53\u524D\u6587\u4EF6\u5939",
   searchUnavailable: "\u8BF7\u542F\u7528\u201C\u641C\u7D22\u201D\u6838\u5FC3\u63D2\u4EF6\u540E\u641C\u7D22\u6B64\u6587\u4EF6\u5939\u3002",
   searchNoFolder: "\u8BF7\u9009\u62E9\u8981\u641C\u7D22\u7684\u6587\u4EF6\u5939\u3002",
@@ -220,7 +238,7 @@ var zh = {
   openSelected: "\u5728\u65B0\u6807\u7B7E\u9875\u6253\u5F00\u6240\u9009\u6587\u4EF6",
   subfolders: "\u5B50\u6587\u4EF6\u5939\u5207\u6362",
   showSubfolderBar: "\u663E\u793A\u5B50\u6587\u4EF6\u5939\u5FEB\u6377\u680F",
-  showSubfolderBarDesc: "\u663E\u793A\u53EF\u62D6\u52A8\u6392\u5E8F\u7684\u76F4\u63A5\u5B50\u6587\u4EF6\u5939\u5FEB\u6377\u680F\u3002\u70B9\u51FB\u7B2C\u4E00\u6392\u7236\u6587\u4EF6\u5939\uFF0C\u8FD4\u56DE\u5176\u5B8C\u6574\u5185\u5BB9\u3002",
+  showSubfolderBarDesc: "\u663E\u793A\u53EF\u62D6\u52A8\u6392\u5E8F\u7684\u76F4\u63A5\u5B50\u6587\u4EF6\u5939\u5165\u53E3\u3002\u70B9\u51FB\u6BCD\u6587\u4EF6\u5939\uFF0C\u8FD4\u56DE\u5176\u5B8C\u6574\u5185\u5BB9\u3002",
   moveSelected: "\u79FB\u52A8\u6240\u9009\u9879\u76EE",
   chooseFolder: "\u9009\u62E9\u76EE\u6807\u6587\u4EF6\u5939",
   moveProgress: "\u5DF2\u79FB\u52A8\u9879\u76EE",
@@ -344,6 +362,14 @@ var MoveFolderModal = class extends import_obsidian2.FuzzySuggestModal {
 // src/native.ts
 var import_obsidian3 = require("obsidian");
 var FILE_MENU_SOURCE = "file-explorer-context-menu";
+function nativeDragPaths(app) {
+  var _a;
+  const payload = (_a = app.dragManager) == null ? void 0 : _a.draggable;
+  if (!payload) return null;
+  const files = payload.type === "files" && Array.isArray(payload.files) ? payload.files : payload.type === "file" || payload.type === "folder" ? [payload.file] : [];
+  if (!files.length || !files.every((file) => (file instanceof import_obsidian3.TFile || file instanceof import_obsidian3.TFolder) && !(file instanceof import_obsidian3.TFolder && file.isRoot()) && app.vault.getAbstractFileByPath(file.path) === file)) return null;
+  return [...new Set(files.map((file) => file.path))];
+}
 function startNativeDrag(app, event, files, elements) {
   var _a;
   const manager = app.dragManager;
@@ -387,6 +413,10 @@ var FolderPinView = class extends import_obsidian4.ItemView {
   constructor(leaf, plugin) {
     super(leaf);
     this.plugin = plugin;
+    this.resizeState = null;
+    this.hoverParent = null;
+    this.dragPreviewParent = null;
+    this.dragScroll = null;
     this.subfolderSignature = "";
     this.subfolderDrag = null;
     this.moving = false;
@@ -428,8 +458,20 @@ var FolderPinView = class extends import_obsidian4.ItemView {
     this.contentEl.empty();
     this.contentEl.addClass("fpv-root");
     this.toolbar = this.contentEl.createDiv({ cls: "nav-header fpv-toolbar", attr: { role: "toolbar" } });
-    this.pinBar = this.contentEl.createDiv({ cls: "fpv-bar", attr: { role: "tablist" } });
-    this.subfolderBar = this.contentEl.createDiv({ cls: "fpv-bar fpv-subfolder-bar", attr: { role: "tablist" } });
+    this.navigationEl = this.contentEl.createDiv({ cls: "fpv-navigation" });
+    const parentColumn = this.navigationEl.createDiv({ cls: "fpv-column" });
+    this.pinBar = parentColumn.createDiv({ cls: "fpv-bar", attr: { role: "tablist" } });
+    this.subfolderColumn = this.navigationEl.createDiv({ cls: "fpv-column fpv-child-column" });
+    this.subfolderBar = this.subfolderColumn.createDiv({ cls: "fpv-bar fpv-subfolder-bar", attr: { role: "tablist" } });
+    this.childEmpty = this.subfolderColumn.createDiv({ cls: "fpv-child-empty" });
+    this.separator = this.contentEl.createDiv({ cls: "fpv-separator", attr: {
+      role: "separator",
+      tabindex: "0",
+      "aria-orientation": "horizontal",
+      "aria-valuemin": "20",
+      "aria-valuemax": "60"
+    } });
+    this.setupResize();
     this.selectionBar = this.contentEl.createDiv({ cls: "fpv-selection-bar", attr: { hidden: "" } });
     this.selectionLabel = this.selectionBar.createSpan({ attr: { role: "status", "aria-live": "polite" } });
     this.selectionDone = this.selectionBar.createEl("button", { attr: { type: "button" } });
@@ -457,6 +499,7 @@ var FolderPinView = class extends import_obsidian4.ItemView {
       }
     });
     this.registerDomEvent(this.pinBar, "wheel", (event) => {
+      if (this.data.layout === "vertical") return;
       if (Math.abs(event.deltaY) <= Math.abs(event.deltaX) || this.pinBar.scrollWidth <= this.pinBar.clientWidth) return;
       const old = this.pinBar.scrollLeft;
       this.pinBar.scrollLeft += event.deltaY * (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? this.pinBar.clientWidth : 1);
@@ -464,6 +507,7 @@ var FolderPinView = class extends import_obsidian4.ItemView {
     }, { passive: false });
     this.registerDomEvent(this.pinBar, "scroll", () => this.updateOverflow());
     this.registerDomEvent(this.subfolderBar, "wheel", (event) => {
+      if (this.data.layout === "vertical") return;
       const bar = this.subfolderBar;
       if (Math.abs(event.deltaY) <= Math.abs(event.deltaX) || bar.scrollWidth <= bar.clientWidth) return;
       const old = bar.scrollLeft;
@@ -471,6 +515,18 @@ var FolderPinView = class extends import_obsidian4.ItemView {
       if (old !== bar.scrollLeft) event.preventDefault();
     }, { passive: false });
     this.registerDomEvent(this.subfolderBar, "scroll", () => this.updateOverflow());
+    for (const bar of [this.pinBar, this.subfolderBar]) {
+      this.registerDomEvent(bar, "dragover", (event) => this.scrollDuringDrag(bar, event));
+      this.registerDomEvent(bar, "dragleave", (event) => {
+        if (!event.relatedTarget || !bar.contains(event.relatedTarget)) this.stopDragScroll();
+      });
+    }
+    this.registerDomEvent(this.contentEl.doc, "dragend", () => this.clearFileDrag());
+    this.registerDomEvent(this.contentEl.doc, "drop", () => this.clearFileDrag());
+    this.registerDomEvent(this.contentEl.doc, "keydown", (event) => {
+      if (event.key === "Escape" && (this.fileDrag || this.dragPreviewParent)) this.clearFileDrag();
+    });
+    this.registerDomEvent(this.contentEl.win, "blur", () => this.clearFileDrag());
     this.localize();
     if (this.data.autoReveal) this.revealActive();
   }
@@ -478,6 +534,7 @@ var FolderPinView = class extends import_obsidian4.ItemView {
     this.creationId++;
     this.captureScroll();
     this.closed = true;
+    this.finishResize(false);
     this.clearFileDrag();
     if (this.frame !== void 0) this.contentEl.win.cancelAnimationFrame(this.frame);
     this.cancelEditor();
@@ -490,6 +547,9 @@ var FolderPinView = class extends import_obsidian4.ItemView {
     if (!this.tree) return;
     this.lastLanguage = this.plugin.language;
     this.containerLabels.forEach(({ el, key }) => el.setText(this.t(key)));
+    this.childEmpty.setText(this.t("noSubfolders"));
+    this.separator.setAttribute("aria-label", this.t("resizeNavigation"));
+    this.separator.title = this.t("resizeNavigationHint");
     this.buildToolbar();
     this.sync();
   }
@@ -507,6 +567,80 @@ var FolderPinView = class extends import_obsidian4.ItemView {
     }
     this.renderPins();
     this.renderTree(false);
+  }
+  refreshLayout() {
+    if (!this.navigationEl || this.closed) return;
+    this.finishResize(false);
+    this.clearFileDrag();
+    this.applyLayout();
+    this.schedulePinReveal();
+  }
+  applyLayout() {
+    const vertical = this.data.layout === "vertical";
+    this.contentEl.toggleClass("fpv-vertical", vertical);
+    this.contentEl.style.setProperty("--fpv-navigation-height", `${this.data.navigationHeight}%`);
+    this.navigationEl.hidden = !this.data.pinnedFolders.length;
+    this.navigationEl.toggleClass("fpv-single-column", !this.data.showSubfolderBar);
+    this.subfolderColumn.hidden = !this.data.showSubfolderBar || !vertical && this.subfolderBar.hidden;
+    this.childEmpty.hidden = !this.subfolderBar.hidden;
+    this.separator.hidden = !vertical || this.navigationEl.hidden;
+    this.separator.setAttribute("aria-valuenow", String(Math.round(this.data.navigationHeight)));
+    this.separator.setAttribute("aria-valuetext", `${Math.round(this.data.navigationHeight)}%`);
+    for (const bar of [this.pinBar, this.subfolderBar]) bar.setAttribute("aria-orientation", vertical ? "vertical" : "horizontal");
+    this.updateOverflow();
+  }
+  setNavigationHeight(height) {
+    this.data.navigationHeight = Math.max(20, Math.min(60, height));
+    this.plugin.views().forEach((view) => view.applyLayout());
+  }
+  setupResize() {
+    this.registerDomEvent(this.separator, "pointerdown", (event) => {
+      if (this.resizeState || event.button !== 0 || this.data.layout !== "vertical") return;
+      const height = this.contentEl.getBoundingClientRect().height;
+      if (!height) return;
+      event.preventDefault();
+      this.separator.focus({ preventScroll: true });
+      this.resizeState = { pointer: event.pointerId, startY: event.clientY, startHeight: this.data.navigationHeight, height };
+      this.separator.setPointerCapture(event.pointerId);
+      this.contentEl.addClass("fpv-resizing");
+    });
+    this.registerDomEvent(this.separator, "pointermove", (event) => {
+      const state = this.resizeState;
+      if (state && state.pointer === event.pointerId)
+        this.setNavigationHeight(state.startHeight + (event.clientY - state.startY) / state.height * 100);
+    });
+    this.registerDomEvent(this.separator, "pointerup", (event) => {
+      var _a;
+      if (((_a = this.resizeState) == null ? void 0 : _a.pointer) === event.pointerId) this.finishResize(true);
+    });
+    this.registerDomEvent(this.separator, "pointercancel", () => this.finishResize(false));
+    this.registerDomEvent(this.separator, "lostpointercapture", () => this.finishResize(true));
+    this.registerDomEvent(this.separator, "keydown", (event) => {
+      if (event.key === "Escape" && this.resizeState) {
+        this.finishResize(false);
+        return;
+      }
+      const step = event.shiftKey ? 5 : 2;
+      const value = event.key === "ArrowUp" ? this.data.navigationHeight - step : event.key === "ArrowDown" ? this.data.navigationHeight + step : event.key === "Home" ? 20 : event.key === "End" ? 60 : null;
+      if (value === null) return;
+      event.preventDefault();
+      this.setNavigationHeight(value);
+      this.plugin.persist();
+    });
+    this.registerDomEvent(this.separator, "dblclick", () => {
+      this.setNavigationHeight(36);
+      this.plugin.persist();
+    });
+  }
+  finishResize(commit) {
+    var _a, _b;
+    const state = this.resizeState;
+    if (!state) return;
+    this.resizeState = null;
+    if (!commit) this.setNavigationHeight(state.startHeight);
+    if ((_b = (_a = this.separator).hasPointerCapture) == null ? void 0 : _b.call(_a, state.pointer)) this.separator.releasePointerCapture(state.pointer);
+    this.contentEl.removeClass("fpv-resizing");
+    this.plugin.persist();
   }
   tool(icon, key, handler) {
     const button = this.toolbar.createEl("button", { cls: "clickable-icon nav-action-button fpv-tool", attr: { type: "button" } });
@@ -608,6 +742,7 @@ var FolderPinView = class extends import_obsidian4.ItemView {
     const signature = JSON.stringify([this.data.pinnedFolders, this.plugin.language]);
     if (signature !== this.pinSignature) {
       const scroll = this.pinBar.scrollLeft;
+      const scrollTop = this.pinBar.scrollTop;
       const hadFocus = this.pinBar.contains(this.contentEl.doc.activeElement);
       this.pinBar.empty();
       this.pinSignature = signature;
@@ -626,17 +761,23 @@ var FolderPinView = class extends import_obsidian4.ItemView {
           })).showAtMouseEvent(event);
         });
         button.addEventListener("keydown", (event) => {
-          var _a2;
+          var _a2, _b, _c;
           const pins = this.data.pinnedFolders;
           let index = pins.indexOf(path);
-          if (event.key === "ArrowLeft") index = (index + pins.length - 1) % pins.length;
-          else if (event.key === "ArrowRight") index = (index + 1) % pins.length;
+          const vertical = this.data.layout === "vertical";
+          if (vertical && event.key === "ArrowRight") {
+            (_b = (_a2 = this.subfolderBar.querySelector(".is-active")) != null ? _a2 : this.subfolderBar.querySelector(".fpv-pin")) == null ? void 0 : _b.focus();
+            event.preventDefault();
+            return;
+          }
+          if (event.key === (vertical ? "ArrowUp" : "ArrowLeft")) index = (index + pins.length - 1) % pins.length;
+          else if (event.key === (vertical ? "ArrowDown" : "ArrowRight")) index = (index + 1) % pins.length;
           else if (event.key === "Home") index = 0;
           else if (event.key === "End") index = pins.length - 1;
           else return;
           event.preventDefault();
           this.selectRegion(pins[index]);
-          (_a2 = this.activePin()) == null ? void 0 : _a2.focus({ preventScroll: true });
+          (_c = this.activePin()) == null ? void 0 : _c.focus({ preventScroll: true });
         });
         button.addEventListener("dragstart", (event) => {
           var _a2;
@@ -652,11 +793,12 @@ var FolderPinView = class extends import_obsidian4.ItemView {
           if (event.dataTransfer) event.dataTransfer.effectAllowed = "move";
         });
         button.addEventListener("dragend", () => {
+          this.stopDragScroll();
           this.dragPath = null;
           this.pinBar.querySelectorAll(".is-dragging, .drag-over").forEach((el) => el.classList.remove("is-dragging", "drag-over"));
         });
         button.addEventListener("dragover", (event) => {
-          if (this.fileDrag) return;
+          if (this.moveDragPaths()) return;
           if (!this.dragPath || this.dragPath === path) return;
           event.preventDefault();
           button.addClass("drag-over");
@@ -664,7 +806,7 @@ var FolderPinView = class extends import_obsidian4.ItemView {
         button.addEventListener("dragleave", () => button.removeClass("drag-over"));
         button.addEventListener("drop", (event) => {
           var _a2;
-          if (this.fileDrag) return;
+          if (this.moveDragPaths()) return;
           event.preventDefault();
           const from = this.data.pinnedFolders.indexOf((_a2 = this.dragPath) != null ? _a2 : "");
           const to = this.data.pinnedFolders.indexOf(path);
@@ -676,9 +818,10 @@ var FolderPinView = class extends import_obsidian4.ItemView {
           this.plugin.persist();
           this.plugin.views().forEach((view) => view.renderPins());
         });
-        this.attachMoveTarget(button, () => this.app.vault.getAbstractFileByPath(path));
+        this.attachMoveTarget(button, () => this.app.vault.getAbstractFileByPath(path), path);
       });
       this.pinBar.scrollLeft = scroll;
+      this.pinBar.scrollTop = scrollTop;
       this.updatePinSelection();
       if (hadFocus) (_a = this.activePin()) == null ? void 0 : _a.focus({ preventScroll: true });
     } else this.updatePinSelection();
@@ -702,18 +845,19 @@ var FolderPinView = class extends import_obsidian4.ItemView {
     }
   }
   renderSubfolders() {
-    var _a, _b, _c;
-    const parent = this.data.activeFolderPath;
+    var _a, _b, _c, _d;
+    const parent = (_a = this.dragPreviewParent) != null ? _a : this.data.activeFolderPath;
     const folder = parent ? this.app.vault.getAbstractFileByPath(parent) : null;
     const children = folder instanceof import_obsidian4.TFolder ? folder.children.filter((file) => file instanceof import_obsidian4.TFolder) : [];
     const names = comparator("name-asc", this.plugin.language === "zh" ? "zh-CN" : "en");
     const paths2 = children.sort((a, b) => names({ name: a.name, folder: true }, { name: b.name, folder: true })).map((file) => file.path);
-    const saved = parent ? (_a = this.data.subfolderOrders[zoneKey(parent)]) != null ? _a : [] : [];
+    const saved = parent ? (_b = this.data.subfolderOrders[zoneKey(parent)]) != null ? _b : [] : [];
     const order = [...saved.filter((path) => paths2.includes(path)), ...paths2.filter((path) => !saved.includes(path))];
     const signature = JSON.stringify([parent, this.data.showSubfolderBar, order, this.plugin.language]);
     if (signature !== this.subfolderSignature) {
       const sameParent = this.subfolderBar.dataset.parent === (parent != null ? parent : "");
       const scroll = sameParent ? this.subfolderBar.scrollLeft : 0;
+      const scrollTop = sameParent ? this.subfolderBar.scrollTop : 0;
       const hadFocus = this.subfolderBar.contains(this.contentEl.doc.activeElement);
       const focusedTab = hadFocus && sameParent ? this.contentEl.doc.activeElement.dataset.path : null;
       this.subfolderBar.empty();
@@ -728,21 +872,27 @@ var FolderPinView = class extends import_obsidian4.ItemView {
         (0, import_obsidian4.setTooltip)(button, path);
         button.addEventListener("click", () => this.selectSubfolder(path));
         button.addEventListener("keydown", (event) => {
-          var _a2, _b2;
+          var _a2, _b2, _c2;
           let index = order.indexOf(path);
-          if (event.key === "ArrowLeft") index = (index + order.length - 1) % order.length;
-          else if (event.key === "ArrowRight") index = (index + 1) % order.length;
+          const vertical = this.data.layout === "vertical";
+          if (vertical && event.key === "ArrowLeft") {
+            event.preventDefault();
+            (_a2 = this.activePin()) == null ? void 0 : _a2.focus();
+            return;
+          }
+          if (event.key === (vertical ? "ArrowUp" : "ArrowLeft")) index = (index + order.length - 1) % order.length;
+          else if (event.key === (vertical ? "ArrowDown" : "ArrowRight")) index = (index + 1) % order.length;
           else if (event.key === "Home") index = 0;
           else if (event.key === "End") index = order.length - 1;
           else if (event.key === "Escape") {
             event.preventDefault();
             this.selectRegion(parent);
-            (_a2 = this.activePin()) == null ? void 0 : _a2.focus();
+            (_b2 = this.activePin()) == null ? void 0 : _b2.focus();
             return;
           } else return;
           event.preventDefault();
           this.selectSubfolder(order[index]);
-          (_b2 = this.subfolderBar.querySelector(".is-active")) == null ? void 0 : _b2.focus({ preventScroll: true });
+          (_c2 = this.subfolderBar.querySelector(".is-active")) == null ? void 0 : _c2.focus({ preventScroll: true });
         });
         button.addEventListener("dragstart", (event) => {
           var _a2;
@@ -758,19 +908,20 @@ var FolderPinView = class extends import_obsidian4.ItemView {
           if (event.dataTransfer) event.dataTransfer.effectAllowed = "move";
         });
         button.addEventListener("dragend", () => {
+          this.stopDragScroll();
           this.subfolderDrag = null;
           this.subfolderBar.querySelectorAll(".is-dragging, .drag-over").forEach((el) => el.classList.remove("is-dragging", "drag-over"));
         });
         button.addEventListener("dragover", (event) => {
           var _a2;
-          if (!this.fileDrag && ((_a2 = this.subfolderDrag) == null ? void 0 : _a2.parent) === parent && this.subfolderDrag.path !== path) {
+          if (!this.moveDragPaths() && ((_a2 = this.subfolderDrag) == null ? void 0 : _a2.parent) === parent && this.subfolderDrag.path !== path) {
             event.preventDefault();
             button.addClass("drag-over");
           }
         });
         button.addEventListener("dragleave", () => button.removeClass("drag-over"));
         button.addEventListener("drop", (event) => {
-          if (this.fileDrag) return;
+          if (this.moveDragPaths()) return;
           const source = this.subfolderDrag;
           this.subfolderDrag = null;
           button.removeClass("drag-over");
@@ -788,7 +939,8 @@ var FolderPinView = class extends import_obsidian4.ItemView {
         this.attachMoveTarget(button, () => this.app.vault.getAbstractFileByPath(path));
       }
       this.subfolderBar.scrollLeft = scroll;
-      if (hadFocus) (_c = (_b = Array.from(this.subfolderBar.querySelectorAll(".fpv-pin")).find((button) => button.dataset.path === (focusedTab != null ? focusedTab : this.data.activeSubfolderPath))) != null ? _b : this.activePin()) == null ? void 0 : _c.focus({ preventScroll: true });
+      this.subfolderBar.scrollTop = scrollTop;
+      if (hadFocus) (_d = (_c = Array.from(this.subfolderBar.querySelectorAll(".fpv-pin")).find((button) => button.dataset.path === (focusedTab != null ? focusedTab : this.data.activeSubfolderPath))) != null ? _c : this.activePin()) == null ? void 0 : _d.focus({ preventScroll: true });
     }
     this.subfolderBar.hidden = !this.data.showSubfolderBar || !order.length;
     this.subfolderBar.querySelectorAll(".fpv-pin").forEach((button, index) => {
@@ -797,6 +949,7 @@ var FolderPinView = class extends import_obsidian4.ItemView {
       button.setAttribute("aria-selected", String(active));
       button.tabIndex = active || !this.data.activeSubfolderPath && index === 0 ? 0 : -1;
     });
+    this.applyLayout();
   }
   selectSubfolder(path) {
     var _a;
@@ -833,16 +986,25 @@ var FolderPinView = class extends import_obsidian4.ItemView {
         if (!button || container.hidden) continue;
         const bar = container.getBoundingClientRect();
         const rect = button.getBoundingClientRect();
-        const start = rect.left - bar.left + container.scrollLeft;
-        container.scrollLeft = revealScroll(container.scrollLeft, container.clientWidth, start - 8, rect.width + 16);
+        if (this.data.layout === "vertical") {
+          const start = rect.top - bar.top + container.scrollTop;
+          container.scrollTop = revealScroll(container.scrollTop, container.clientHeight, start - 4, rect.height + 8);
+        } else {
+          const start = rect.left - bar.left + container.scrollLeft;
+          container.scrollLeft = revealScroll(container.scrollLeft, container.clientWidth, start - 8, rect.width + 16);
+        }
       }
       this.updateOverflow();
     });
   }
   updateOverflow() {
     for (const bar of [this.pinBar, this.subfolderBar]) {
-      bar.toggleClass("has-before", bar.scrollLeft > 1);
-      bar.toggleClass("has-after", bar.scrollLeft + bar.clientWidth < bar.scrollWidth - 1);
+      const vertical = this.data.layout === "vertical";
+      const scroll = vertical ? bar.scrollTop : bar.scrollLeft;
+      const viewport = vertical ? bar.clientHeight : bar.clientWidth;
+      const size = vertical ? bar.scrollHeight : bar.scrollWidth;
+      bar.toggleClass("has-before", scroll > 1);
+      bar.toggleClass("has-after", scroll + viewport < size - 1);
     }
   }
   selectRegion(path) {
@@ -1023,40 +1185,110 @@ var FolderPinView = class extends import_obsidian4.ItemView {
   }
   clearFileDrag() {
     var _a;
+    this.cancelDragHover();
+    this.stopDragScroll();
     (_a = this.endNativeDrag) == null ? void 0 : _a.call(this);
     this.endNativeDrag = null;
     this.fileDrag = null;
     this.contentEl.querySelectorAll(".fpv-drop-target, .fpv-drop-invalid, .fpv-row.is-dragging").forEach((el) => el.classList.remove("fpv-drop-target", "fpv-drop-invalid", "is-dragging"));
+    if (this.dragPreviewParent !== null) {
+      this.dragPreviewParent = null;
+      this.pinBar.querySelectorAll(".is-drag-preview").forEach((el) => el.classList.remove("is-drag-preview"));
+      if (!this.closed) this.renderSubfolders();
+    }
   }
-  attachMoveTarget(element, getTarget) {
+  moveDragPaths() {
+    var _a;
+    if (this.closed || this.moving || this.editor || this.dragPath || this.subfolderDrag) return null;
+    return (_a = this.fileDrag) != null ? _a : nativeDragPaths(this.app);
+  }
+  cancelDragHover() {
+    if (this.hoverTimer !== void 0) this.contentEl.win.clearTimeout(this.hoverTimer);
+    this.hoverTimer = void 0;
+    this.hoverParent = null;
+  }
+  previewParent(path) {
+    var _a;
+    if (this.hoverParent === path) return;
+    if (!this.data.showSubfolderBar || ((_a = this.dragPreviewParent) != null ? _a : this.data.activeFolderPath) === path) {
+      this.cancelDragHover();
+      return;
+    }
+    this.cancelDragHover();
+    this.hoverParent = path;
+    this.hoverTimer = this.contentEl.win.setTimeout(() => {
+      this.hoverTimer = void 0;
+      this.hoverParent = null;
+      if (!this.moveDragPaths() || !this.data.pinnedFolders.includes(path) || !(this.app.vault.getAbstractFileByPath(path) instanceof import_obsidian4.TFolder)) return;
+      this.dragPreviewParent = path === this.data.activeFolderPath ? null : path;
+      this.pinBar.querySelectorAll(".fpv-pin").forEach((button) => button.toggleClass("is-drag-preview", button.dataset.path === this.dragPreviewParent));
+      this.renderSubfolders();
+    }, 550);
+  }
+  stopDragScroll() {
+    this.dragScroll = null;
+    if (this.dragScrollFrame !== void 0) this.contentEl.win.cancelAnimationFrame(this.dragScrollFrame);
+    this.dragScrollFrame = void 0;
+  }
+  scrollDuringDrag(bar, event) {
+    if (!this.moveDragPaths() && !this.dragPath && !this.subfolderDrag) return;
+    this.dragScroll = { bar, x: event.clientX, y: event.clientY };
+    if (this.dragScrollFrame !== void 0) return;
+    const tick = () => {
+      this.dragScrollFrame = void 0;
+      const state = this.dragScroll;
+      if (!state || this.closed) return;
+      const vertical = this.data.layout === "vertical";
+      const rect = state.bar.getBoundingClientRect();
+      const position = vertical ? state.y : state.x;
+      const start = vertical ? rect.top : rect.left;
+      const end = vertical ? rect.bottom : rect.right;
+      const edge = Math.min(28, (end - start) / 3);
+      const delta = edge > 0 && position < start + edge ? -Math.ceil((start + edge - position) / edge * 10) : edge > 0 && position > end - edge ? Math.ceil((position - end + edge) / edge * 10) : 0;
+      if (!delta) return;
+      if (vertical) state.bar.scrollTop += delta;
+      else state.bar.scrollLeft += delta;
+      this.updateOverflow();
+      this.dragScrollFrame = this.contentEl.win.requestAnimationFrame(tick);
+    };
+    this.dragScrollFrame = this.contentEl.win.requestAnimationFrame(tick);
+  }
+  attachMoveTarget(element, getTarget, parentPath) {
     element.addEventListener("dragover", (event) => {
-      if (!this.fileDrag) return;
+      const paths2 = this.moveDragPaths();
+      if (!paths2) return;
       event.preventDefault();
+      event.stopPropagation();
       const target = getTarget();
-      const plan = target instanceof import_obsidian4.TFolder ? planMove(this.app.vault, this.fileDrag, target) : null;
+      const plan = target instanceof import_obsidian4.TFolder ? planMove(this.app.vault, paths2, target) : null;
       element.toggleClass("fpv-drop-target", !!plan && !plan.error && plan.moves.length > 0);
       element.toggleClass("fpv-drop-invalid", !plan || !!plan.error);
-      if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+      if (event.dataTransfer) event.dataTransfer.dropEffect = plan && !plan.error && plan.moves.length ? "move" : "none";
+      if (parentPath) this.previewParent(parentPath);
+      const bar = element.closest(".fpv-bar");
+      if (bar) this.scrollDuringDrag(bar, event);
     });
     element.addEventListener("dragleave", (event) => {
       if (event.relatedTarget && element.contains(event.relatedTarget)) return;
+      if (this.hoverParent === parentPath) this.cancelDragHover();
       element.removeClass("fpv-drop-target", "fpv-drop-invalid");
     });
     element.addEventListener("drop", (event) => {
-      if (!this.fileDrag) return;
+      const paths2 = this.moveDragPaths();
+      if (!paths2) return;
       event.preventDefault();
       event.stopPropagation();
-      const paths2 = this.fileDrag;
-      this.clearFileDrag();
+      const destinationRegion = this.dragPreviewParent;
+      this.plugin.views().forEach((view) => view.clearFileDrag());
       const target = getTarget();
       if (!(target instanceof import_obsidian4.TFolder)) {
         this.reportError(this.t("missing"));
         return;
       }
-      void this.moveToFolder(paths2, target);
+      void this.moveToFolder(paths2, target, destinationRegion);
     });
   }
-  async moveToFolder(paths2, target) {
+  async moveToFolder(paths2, target, preferredRegion = null) {
     if (this.moving || this.closed) return;
     const plan = planMove(this.app.vault, paths2, target);
     if (plan.error) {
@@ -1082,7 +1314,7 @@ var FolderPinView = class extends import_obsidian4.ItemView {
         completed++;
       }
       if (this.closed || browsingPath(this.data) !== origin) return;
-      const region = this.data.pinnedFolders.includes(target.path) ? target.path : this.data.activeFolderPath;
+      const region = this.data.pinnedFolders.includes(target.path) ? target.path : preferredRegion && this.data.pinnedFolders.includes(preferredRegion) && containsPath(preferredRegion, target.path) ? preferredRegion : this.data.activeFolderPath;
       if (region !== this.data.activeFolderPath) {
         this.captureScroll();
         this.data.activeFolderPath = region;
@@ -1588,6 +1820,9 @@ var FolderPinPlugin = class extends import_obsidian5.Plugin {
         return (_a = this.views()[0]) == null ? void 0 : _a.toggleSelectionMode();
       });
     } });
+    this.addCommand({ id: "toggle-folder-layout", name: this.t("toggleLayout"), callback: () => {
+      this.setLayout(this.data.layout === "vertical" ? "horizontal" : "vertical");
+    } });
     this.addSettingTab(new FolderPinSettings(this.app, this));
     this.registerEvent(this.app.workspace.on("file-menu", (menu, file, source) => {
       if (source === VIEW_TYPE || this.ownMenus.has(menu) || !(file instanceof import_obsidian5.TFolder) || file.isRoot()) return;
@@ -1668,6 +1903,12 @@ var FolderPinPlugin = class extends import_obsidian5.Plugin {
   refreshViews() {
     this.views().forEach((view) => view.sync());
   }
+  setLayout(layout) {
+    this.views().forEach((view) => view.captureScroll());
+    this.data.layout = layout;
+    this.persist();
+    this.views().forEach((view) => view.refreshLayout());
+  }
   refreshLanguage() {
     var _a;
     (_a = this.ribbon) == null ? void 0 : _a.setAttribute("aria-label", this.t("title"));
@@ -1725,6 +1966,14 @@ var FolderPinSettings = class extends import_obsidian5.PluginSettingTab {
         name: this.plugin.t("showSubfolderBar"),
         desc: this.plugin.t("showSubfolderBarDesc"),
         control: { type: "toggle", key: "showSubfolderBar" }
+      },
+      {
+        name: this.plugin.t("layout"),
+        desc: this.plugin.t("layoutDesc"),
+        control: { type: "dropdown", key: "layout", options: {
+          horizontal: this.plugin.t("horizontal"),
+          vertical: this.plugin.t("vertical")
+        } }
       }
     ];
   }
@@ -1732,6 +1981,7 @@ var FolderPinSettings = class extends import_obsidian5.PluginSettingTab {
     if (key === "language") return this.plugin.data.language;
     if (key === "autoReveal") return this.plugin.data.autoReveal;
     if (key === "showSubfolderBar") return this.plugin.data.showSubfolderBar;
+    if (key === "layout") return this.plugin.data.layout;
     return void 0;
   }
   setControlValue(key, value) {
@@ -1739,6 +1989,8 @@ var FolderPinSettings = class extends import_obsidian5.PluginSettingTab {
       this.plugin.data.language = value === "zh" || value === "en" ? value : "auto";
       this.plugin.refreshLanguage();
       this.update();
+    } else if (key === "layout") {
+      this.plugin.setLayout(value === "vertical" ? "vertical" : "horizontal");
     } else if (key === "showSubfolderBar") {
       this.plugin.views().forEach((view) => view.captureScroll());
       this.plugin.data.showSubfolderBar = value === true;

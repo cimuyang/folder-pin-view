@@ -27,6 +27,9 @@ export default class FolderPinPlugin extends Plugin {
         this.addCommand({ id: 'toggle-selection-mode', name: this.t('selectionMode'), callback: () => {
             void this.activateView().then(() => this.views()[0]?.toggleSelectionMode());
         } });
+        this.addCommand({ id: 'toggle-folder-layout', name: this.t('toggleLayout'), callback: () => {
+            this.setLayout(this.data.layout === 'vertical' ? 'horizontal' : 'vertical');
+        } });
         this.addSettingTab(new FolderPinSettings(this.app, this));
         this.registerEvent(this.app.workspace.on('file-menu', (menu, file, source) => {
             if (source === VIEW_TYPE || this.ownMenus.has(menu) || !(file instanceof TFolder) || file.isRoot()) return;
@@ -104,6 +107,12 @@ export default class FolderPinPlugin extends Plugin {
         if (pinned) await this.activateView();
     }
     refreshViews(): void { this.views().forEach(view => view.sync()); }
+    setLayout(layout: PluginData['layout']): void {
+        this.views().forEach(view => view.captureScroll());
+        this.data.layout = layout;
+        this.persist();
+        this.views().forEach(view => view.refreshLayout());
+    }
     refreshLanguage(): void {
         this.ribbon?.setAttribute('aria-label', this.t('title'));
         this.views().forEach(view => view.localize());
@@ -150,12 +159,17 @@ class FolderPinSettings extends PluginSettingTab {
                 control: { type: 'toggle', key: 'autoReveal' } },
             { name: this.plugin.t('showSubfolderBar'), desc: this.plugin.t('showSubfolderBarDesc'),
                 control: { type: 'toggle', key: 'showSubfolderBar' } },
+            { name: this.plugin.t('layout'), desc: this.plugin.t('layoutDesc'),
+                control: { type: 'dropdown', key: 'layout', options: {
+                    horizontal: this.plugin.t('horizontal'), vertical: this.plugin.t('vertical'),
+                } } },
         ];
     }
     getControlValue(key: string): unknown {
         if (key === 'language') return this.plugin.data.language;
         if (key === 'autoReveal') return this.plugin.data.autoReveal;
         if (key === 'showSubfolderBar') return this.plugin.data.showSubfolderBar;
+        if (key === 'layout') return this.plugin.data.layout;
         return undefined;
     }
     setControlValue(key: string, value: unknown): void {
@@ -163,6 +177,8 @@ class FolderPinSettings extends PluginSettingTab {
             this.plugin.data.language = value === 'zh' || value === 'en' ? value : 'auto';
             this.plugin.refreshLanguage();
             this.update();
+        } else if (key === 'layout') {
+            this.plugin.setLayout(value === 'vertical' ? 'vertical' : 'horizontal');
         } else if (key === 'showSubfolderBar') {
             this.plugin.views().forEach(view => view.captureScroll());
             this.plugin.data.showSubfolderBar = value === true;
